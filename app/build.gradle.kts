@@ -152,12 +152,16 @@ dependencies {
     ksp("androidx.room:room-compiler:$roomVersion")
 
     // DexKit 2.0.6 起才支持 16KB 页内核: 2.0.1 的 libdexkit.so 实测 PT_LOAD 仅
-    // 4KB 对齐, 16KB 页设备上动态链接器直接拒载, 反混淆整体失效。2.2.0 查询 API
-    // 与 2.0.1 同族(同类 API 102 框架的模块实测在用), POM 仍声明 stdlib 1.5.0,
-    // 本项目 Kotlin 1.9.21 可消费(编译实测为准, 不行回退 2.0.7——同样已对齐)
+    // 4KB 对齐, 16KB 页设备上动态链接器直接拒载, 反混淆整体失效。
+    // 2.3.0(2026-09-22): POM/metadata 仍声明 stdlib 1.5.0(Kotlin 1.9.21 可消费),
+    // 传递依赖与 2.2.0 完全一致(flatbuffers 23.5.26/cxx 1.2.0); aar 内 arm64-v8a
+    // 与 x86_64 的 libdexkit.so 全部 PT_LOAD 实测 16384 对齐。升级收益: 零拷贝
+    // 加载、字符串查询优化(本项目 12/21 matcher 为字符串特征)、usingNumbers
+    // 浮点修复(ResMatcher 路径)、线程池销毁 SIGABRT 修复。无破坏性 API 变更,
+    // 全项目 ClassMatcher 均走 create() DSL(2.3.0 修复的 ClassMatcher(Class<?>) 构造器未用)
     // 不引 okhttp: 签到层仅 3 个同步 JSON 接口, HttpURLConnection(平台自带,
     // keep-alive 连接复用)足够, 省去 okhttp+okio 整链 dex 体积
-    implementation("org.luckypray:dexkit:2.2.0")
+    implementation("org.luckypray:dexkit:2.3.0")
     implementation("dev.rikka.ndk.thirdparty:cxx:1.2.0")
 
     // JVM 单测: XposedContext.safeConstantFor / DeobfuscationHelper 版本区间等
