@@ -1,0 +1,10 @@
+# 关闭 Git 的换行符自动转换：项目在 Windows 开发但源码以 LF 为主、
+# 少数文件为 CRLF（文件内各自一致），自动转换会搅动大量文件产生伪差异。
+# 保留各文件现状原样入库。
+* -text
+
+# 明确按二进制处理（防御性声明）
+*.png binary
+*.apk binary
+*.keystore binary
+*.jks binary
