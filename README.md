@@ -1,5 +1,7 @@
 # TiebaTS（贴吧TS）
 
+> **项目延续说明**：本仓库是 [GuhDoy/TiebaTS](https://github.com/GuhDoy/TiebaTS)（已归档，2024-08 停更）的后续开发版本，原项目的功能在此基础之上继续维护与演进。感谢原作者与社区贡献者。
+
 一个基于 [libxposed API 102](https://github.com/libxposed/api) 的百度贴吧增强模块，注入宿主 `com.baidu.tieba`。
 
 - 当前适配宿主版本：**22.14.1.0**（`app/build.gradle.kts` 中 `BuildConfig.TARGET_VERSION`）
