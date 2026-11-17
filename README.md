@@ -1,5 +1,7 @@
 # TiebaTS（贴吧TS）
 
+[![Telegram](https://img.shields.io/badge/Telegram-中转群-26A5E4?logo=telegram&logoColor=white)](https://t.me/TabSwitch)
+
 > **项目延续说明**：本仓库是 [GuhDoy/TiebaTS](https://github.com/GuhDoy/TiebaTS)（已归档，2024-08 停更）的后续开发版本，原项目的功能在此基础之上继续维护与演进。感谢原作者与社区贡献者。
 
 一个基于 [libxposed API 102](https://github.com/libxposed/api) 的百度贴吧增强模块，注入宿主 `com.baidu.tieba`。
@@ -10,10 +12,6 @@
 - 运行框架：LSPosed（libxposed 新 API）或 LSPatch
 
 > **⚠️ 已知问题**：Android 16+ 设备上可能出现宿主闪退，具体原因暂不清楚（可能与新系统行为变化或 native 兼容性有关），目前正在排查。如果你在这类设备上遇到闪退，欢迎提供日志（模块设置里开启「运行日志」后导出）到 [Issues](../../issues)，或直接提交修复 PR——PR 建到本仓库即可。
-
-## 交流群
-
-Telegram 群入口**在模块设置页内**（不在此直接贴链接）——这是一个中转群，入口不公开挂出是为了防止广告机器人混入。装好模块后，从贴吧 App 内打开「贴吧TS」设置页即可看到入群入口。
 
 ## 功能一览
 
