@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:multiArch="true"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true">
+        <!-- libxposed API 102：模块入口、作用域与 API 版本由 META-INF/xposed/*
+             声明（java_init.list / scope.list / module.prop），不再使用
+             xposedmodule / xposedminversion 等旧 meta-data。 -->
+    </application>
+</manifest>

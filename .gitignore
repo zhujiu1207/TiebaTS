@@ -1,0 +1,31 @@
+# 签名密钥与发版凭据（绝不入库）
+release.keystore
+keystore.properties
+*.jks
+*.idsig
+构建签名流程.txt
+
+# 历史发版产物
+TS_*.apk
+
+# 本地配置（机器相关路径）
+local.properties
+
+# 维护者本地文件：ZCode 审查约定与开发记录，不随开源仓库分发
+AGENTS.md
+.zcodeignore
+
+# Gradle
+.gradle/
+build/
+
+# Android 构建中间产物
+app/.cxx/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+
+# ZCode 工作区数据
+.zcode/
