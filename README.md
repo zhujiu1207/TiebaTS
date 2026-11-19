@@ -1,6 +1,6 @@
 # TiebaTS（贴吧TS）
 
-[![Telegram](https://img.shields.io/badge/Telegram-新链接为17位字符-26A5E4?logo=telegram&logoColor=white)](https://t.me/TabSwitch)
+[![Telegram](https://img.shields.io/badge/Telegram-链接为17位字符-26A5E4?logo=telegram&logoColor=white)](https://t.me/TabSwitch)
 
 > **项目延续说明**：本仓库是 [GuhDoy/TiebaTS](https://github.com/GuhDoy/TiebaTS)（已归档，2024-08 停更）的后续开发版本，原项目的功能在此基础之上继续维护与演进。感谢原作者与社区贡献者。
 
