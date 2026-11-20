@@ -12,10 +12,13 @@
     // 2. 卸载应用的 "notify" 监听器并包一层重注册: floor.getFloorData 响应
     //    的 subpost_list 在应用消费之前按 selectedTab 语义整体重排
     //    (最早=升序/最晚=降序), 应用照常克隆渲染;
-    // 3. 点击分路触发: "最晚"拦下原生自派 sort=1/3 交替请求(降序由包装层
-    //    重排实现), "最早"放行原生热门请求由包装层强制升序, 高亮接管见
-    //    点击处理器内注释。限制与 22.13 一致: 点过 tab 后分页追加的页只
-    //    保证页内有序, 整体顺序不再保证。
+    // 3. 两个 tab 全部放行原生点击, 桥接模式自身不发任何请求——自派
+    //    floor.naRequest 的响应条目缺回复上下文字段, 宿主模板会把根回复
+    //    渲染成"空名+冒号"(同帖 A/B 实证, 见 bridgeSupplementalRefresh
+    //    上方注释), 应用自构请求的响应始终干净; 升/降序全靠包装层重排
+    //    (服务端 sort 值不参与语义)。首屏补发=程序化点击一次原生"最早"
+    //    按钮。限制与 22.13 一致: 点过 tab 后分页追加的页只保证页内有序,
+    //    整体顺序不再保证。
     // Vue2 宿主(12.x~22.13)上 __vue__ 探测可用, 走原有本地排序路径,
     // 桥接不会初始化。
     var bridgeMode = false;
@@ -225,7 +228,9 @@
     // 只在页面上存在原生"热门"文本时执行(说明 H5 刚渲染/还原了 tab 组合),
     // 必须先把"最早"改成"最晚"、再把"热门"改成"最早", 否则文本查找会串。
     // 改名前快照两个按钮的完整 class: 原生默认"热门"是激活态、"最早"是
-    // 未激活态, 以此作为后续恢复高亮的样式来源(不猜测具体激活类名)
+    // 未激活态, 以此作为后续恢复高亮的样式来源(不猜测具体激活类名)。
+    // 该快照仅服务 Vue2 本地排序路径的 applyTabStyle; 桥接模式(22.14+)
+    // 高亮完全由原生管理, 不消费快照、不写任何 class
     function renameTabs() {
         try {
             var hot = findBtn('热门');
@@ -244,20 +249,30 @@
 
     // ===== 桥接模式实现 =====
 
-    // 自派请求的升序值在 1/3 间交替(实测 1/3/4/6 服务端均为正序): 原生桥
-    // 对与上次完全相同的请求参数会去重丢弃, 固定 sort=1 时"补发刷新"后的
-    // 第一次"最晚"点击会被吞掉, 交替值保证相邻请求参数必不同
-    var bridgeLastSort = 0;
-    function bridgeDispatchRefresh() {
-        if (!bridgeTbi) { return false; }
+    // 自派请求响应形状漂移的实证记录(修复冒号问题的依据, 勿再走 naRequest):
+    // - 脚本自派 floor.naRequest(无论参数带不带 load_type)触发的
+    //   floor.getFloorData 响应, 条目缺回复上下文数据, 宿主模板把根回复
+    //   渲染成"空名+冒号"前缀; 同帖同数据下应用自构请求的响应渲染正常;
+    // - 实测驱动过三组参数: {pn,sort,load_type:3}/{pn,sort}/{pn,sort}·
+    //   sort=1/3 交替, 全部带冒号; 而原生点击与应用 sortChange 事件
+    //   (参数由应用构造)的响应在所有轮次中从未出现冒号;
+    // - 推断: 响应形状跟随请求来源而非参数值——应用发请求时会附带某个
+    //   上下文字段/加工步骤, 裸 naRequest 不具备(具体字段未探明, 探针
+    //   只证实了响应差异存在)。
+    // 因此本脚本只做两类触发: ①包装层对响应重排(不发请求); ②程序化
+    // .click() 原生按钮——请求仍由应用自己的代码路径构造, 参数必然兼容
+
+    // 首屏补发: 桥接就绪可能晚于应用的首屏请求(响应已被消费、来不及重排,
+    // 首屏停留在服务端默认序), 程序化点击一次"最早"按钮补一次升序刷新,
+    // 请求走应用自己的代码路径, 保证打开浮层即为"最早"序; 若首屏请求尚未
+    // 发出, 本次点击与首屏的两次响应都会被包装层按当前语义(默认最早=升序)
+    // 重排, 结果一致。找不到按钮(极早期/结构漂移)时静默跳过——首屏保持
+    // 服务端默认序, 仅失去自动升序, 用户点 tab 仍可用
+    function bridgeSupplementalRefresh() {
         try {
-            var sort = bridgeLastSort === 1 ? 3 : 1;
-            bridgeLastSort = sort;
-            bridgeTbi.dispatch('floor.naRequest', { pn: 1, sort: sort, load_type: 3 });
-            return true;
-        } catch (e) {
-            return false;
-        }
+            var tabs = getTabs();
+            if (tabs && tabs.early) { tabs.early.click(); }
+        } catch (e) { }
     }
 
     // 拿页面事件总线: webpack 5 运行时把模块注册表挂在 webpackChunk* 数组上,
@@ -272,22 +287,29 @@
     // 从捕获到的 exports 里做同样的形状校验
     function asTbInfra(ex) {
         if (!ex) { return null; }
-        var cand = (typeof ex.dispatch === 'function' && typeof ex.on === 'function') ? ex
-            : (ex.TbInfra && typeof ex.TbInfra.dispatch === 'function') ? ex.TbInfra : null;
-        if (cand && typeof cand.off === 'function' && cand.lifecycle && cand.lifecycle._feListenerMap) {
-            return cand;
-        }
+        try {
+            var cand = (typeof ex.dispatch === 'function' && typeof ex.on === 'function') ? ex
+                : (ex.TbInfra && typeof ex.TbInfra.dispatch === 'function') ? ex.TbInfra : null;
+            if (cand && typeof cand.off === 'function' && cand.lifecycle
+                && cand.lifecycle._feListenerMap) {
+                return cand;
+            }
+        } catch (e) { }
         return null;
     }
     function findTbInfra(req) {
-        var cached = req.c;
+        // req.c/req.m 是 webpack 运行时的非公开字段, 部分构建形态可能不
+        // 挂载(getter 抛错/只读代理), 统一按"不存在"处理走下一级探测
+        var cached = null;
+        try { cached = req.c; } catch (e) { }
         if (cached) {
             for (var id in cached) {
                 var hit = asTbInfra(cached[id] && cached[id].exports);
                 if (hit) { return hit; }
             }
         }
-        var modules = req.m;
+        var modules = null;
+        try { modules = req.m; } catch (e2) { }
         if (!modules) { return null; }
         // 纯转发 shim 的工厂形态: function(e){ [可选 "use strict";] e.exports=标识符 }
         // (22.14 的 TbInfra 模块即此形态, 真身在 chunk 运行时闭包变量里)。
@@ -337,7 +359,8 @@
                 if (++bridgeChunkAttempts >= 8) { bridgeStopped = true; }
                 return;
             }
-            var map = tbi.lifecycle._feListenerMap;
+            var map = null;
+            try { map = tbi.lifecycle && tbi.lifecycle._feListenerMap; } catch (e0) { }
             var listeners = map && map['notify'];
             if (!Array.isArray(listeners) || !listeners.length) {
                 // 应用还没挂载完: 稍后由轮询重试, 超过 5 次放弃
@@ -399,22 +422,25 @@
                 for (var n = 0; n < originals.length; n++) {
                     try { originals[n](e); } catch (e3) { }
                 }
-                if (mutated) {
-                    // 高亮接管: 响应回显的 current_tab 会把 activeSortId 写成
-                    // 与任何 tab 都不匹配的自派 id, Vue 重渲染后高亮落空,
-                    // 等 Vue 补丁落盘后再对齐一次(立即写会被补丁覆盖)
-                    setTimeout(applyTabStyle, 80);
+                // pill 快速恢复: 响应消费后 Vue 的回显重渲染可能连续多帧,
+                // 每帧都会把 class 重置(乐观渲染的 pill 被抹掉, 观感=胶囊
+                // 消失/弹回)。heal 只在 mutation 时触发且被防抖合并, 2s 轮询
+                // 太慢——在 wrapper 里按 150/400/800ms 主动补写三次(恰好
+                // 覆盖 Vue 回显重渲染周期), applyTabStyle 内部的"右侧已激活
+                // 则不动"守卫保证重复调用无副作用
+                if (mutated && selectedTab === 'latest') {
+                    setTimeout(applyTabStyle, 150);
+                    setTimeout(applyTabStyle, 400);
+                    setTimeout(applyTabStyle, 800);
                 }
             };
             tbi.on('notify', wrap);
             bridgeTbi = tbi;
             bridgeWrapRef = wrap;
             bridgeMode = true;
-            // 首屏补发: 桥接就绪可能晚于应用的首屏请求(响应已被消费、来不及
-            // 重排, 首屏停留在服务端热门序), 主动补一次升序刷新保证打开浮层
-            // 即为"最早"序; 若首屏请求尚未发出, 补发与首屏的两次响应都会被
-            // 包装层按当前语义(默认最早=升序)重排, 结果一致
-            bridgeDispatchRefresh();
+            // 首屏补发(程序化点击, 见 bridgeSupplementalRefresh): 请求由应用
+            // 自构, 响应经包装层按默认"最早"序重排
+            setTimeout(bridgeSupplementalRefresh, 150);
         } catch (e) {
             // 结构性失败(找不到 chunk 数组/require 异常等): 放弃桥接,
             // 按钮退化为原生语义, 不影响宿主
@@ -436,14 +462,74 @@
         }
     }
 
+    // 桥接模式的 pill 保持: 放行架构下点"最晚"=原生"最早"按钮, 原生点击
+    // 乐观渲染把胶囊正确打到右侧, 随后响应回显的 Vue 重渲染把 class 改写,
+    // pill 消失/弹回。pill 的视觉=按钮自身 class 组合(不知道激活样式的具体
+    // CSS 属性, 选择器表达不了"看起来激活", CSS 声明式方案不可行), 只能
+    // 写回 class + 让步逻辑(见 applyTabStyle)。
+    // 关键在抓拍时机的确定性: 200ms 防抖回调常落在"Vue 已重渲染完毕"(右侧
+    // 无 active)之后, 抓拍失败 → latestSnap 永远 null → 弹回后不再恢复
+    // ("有时弹回有时不弹"的随机性来源)。改为双保险:
+    // 1. observer 的 mutation 回调直调 maybeSnapLatest(不等防抖): 原生
+    //    乐观渲染的 class 变更必然进 observer, 同步抓拍零滞后;
+    // 2. 点击处理器放行前记录 preSnap(左右当前 class): 兜底素材。
+    // 抓拍到的组合是右侧按钮自己的原生激活 class(非跨侧移植、非猜测)
+    var latestSnap = null;
+    var preSnap = null;   // 点击放行前的左右 class 预备快照(抓拍失败的兜底素材)
+    function maybeSnapLatest() {
+        if (!(bridgeMode && selectedTab === 'latest')) { return; }
+        try {
+            var tabs = resolveTabs();
+            // 抓拍条件: 右侧带激活类且左侧不带(排除 Vue 把左侧渲染成激活的
+            // 回显瞬间——那时不存在"右侧激活"组合, 误抓会把左侧当前 class
+            // 存成 inactive, 写回时打翻 Vue 的左侧激活态=弹回抖动)
+            if (tabs && /\bactive\b/.test(tabs.latest.className)
+                && !/\binactive\b/.test(tabs.latest.className)
+                && !/\bactive\b/.test(tabs.early.className)
+                && tabs.latest.className !== tabs.early.className) {
+                latestSnap = { active: tabs.latest.className, inactive: tabs.early.className };
+                preSnap = null;
+            }
+        } catch (e) { }
+    }
+
     // 把两个 tab 的 class 对齐到 selectedTab 对应的原生激活/未激活组合。
-    // 排序引起的 H5 重渲染可能重建 tab 行, 把激活态重置回原生默认(最早),
-    // 造成"点最晚后最早仍加粗"的字体回跳——这里负责重新对齐;
-    // 先比对再赋值, 无变化时不写 DOM, 避免触发 MutationObserver 自循环
+    // 仅服务 Vue2 本地排序路径与桥接的"最晚"pill 保持(见 latestSnap);
+    // 桥接"最早"态高亮由原生管理, 直退
     function applyTabStyle() {
+        if (bridgeMode && selectedTab !== 'latest') { return; }
         try {
             var tabs = getTabs();
             if (!tabs) { return; }
+            if (bridgeMode) {
+                // "最晚"pill 保持: 原生乐观渲染瞬间抓到的右侧激活组合补回。
+                // 关键认知(实测): 点"最晚"后响应回显把 activeSortId 归一化
+                // 回热门, Vue 的**最终稳定态就是左侧激活**——不是过渡态。
+                // 旧版"左侧激活不硬抢"的让步在这种回显下等于永久放弃,
+                // pill 停在左侧即"弹回"。因此写回条件只有一条: 右侧未持有
+                // 激活类就写(右侧已激活=目标达成, 不动以免 observer 循环)。
+                // 写回触发 mutation → heal → 比对无差异自然收敛, 与 Vue 的
+                // 竞争窗口仅剩回显重渲染的一帧, 由 2s 轮询兜底再写。
+                // latestSnap 缺失(窗口被吞)时用 preSnap 兜底: preSnap.early
+                // 是点击前左侧的原生激活 class, 对调写到右侧非猜测
+                var latestActive = /\bactive\b/.test(tabs.latest.className)
+                    && !/\binactive\b/.test(tabs.latest.className);
+                if (!latestActive) {
+                    var snap = latestSnap;
+                    if (!snap && preSnap
+                        && /\bactive\b/.test(preSnap.early)
+                        && preSnap.late !== preSnap.early) {
+                        // preSnap 兜底组合: 右侧取点击前左侧的激活 class,
+                        // 左侧取点击前右侧的未激活 class
+                        snap = { active: preSnap.early, inactive: preSnap.late };
+                    }
+                    if (snap) {
+                        tabs.latest.className = snap.active;
+                        tabs.early.className = snap.inactive;
+                    }
+                }
+                return;
+            }
             var act = selectedTab === 'early' ? tabs.early : tabs.latest;
             var ina = selectedTab === 'early' ? tabs.latest : tabs.early;
             if (classSnap) {
@@ -464,6 +550,11 @@
     // 哨兵为假(该页无 lzl 界面)时跳过 renameTabs 的全文档扫描——变更风暴期
     // 每 200ms 一次的全量扫描是这类页面的主要持续开销, 交由轮询退避兜底
     function scheduleHeal() {
+        // 抓拍必须零滞后: 原生乐观渲染的 class 变更是瞬时事件, 200ms 防抖
+        // 回调常落在 Vue 重渲染完毕(右侧无 active)之后错过窗口——在 observer
+        // 回调里同步直调(内部自带 selectedTab/条件守卫, 空窗期直调无开销),
+        // 再走防抖修复
+        maybeSnapLatest();
         if (healScheduled) { return; }
         healScheduled = true;
         setTimeout(function () {
@@ -500,13 +591,25 @@
         try {
             var r1 = tabs.early.getBoundingClientRect();
             var r2 = tabs.latest.getBoundingClientRect();
+            // 容差随 tab 实际高度自适应(不同宿主/UI 密度下 pill 尺寸不同),
+            // 12/8px 仅作下限保留原行为; 包围盒为 0(display:none 等)时退化回下限
+            var h = Math.max(r1.height, r2.height);
+            var padX = Math.max(12, h * 0.5);
+            var padY = Math.max(8, h * 0.25);
             var x = ev.clientX, y = ev.clientY;
-            var minX = Math.min(r1.left, r2.left) - 12;
-            var maxX = Math.max(r1.right, r2.right) + 12;
-            var minY = Math.min(r1.top, r2.top) - 8;
-            var maxY = Math.max(r1.bottom, r2.bottom) + 8;
+            var minX = Math.min(r1.left, r2.left) - padX;
+            var maxX = Math.max(r1.right, r2.right) + padX;
+            var minY = Math.min(r1.top, r2.top) - padY;
+            var maxY = Math.max(r1.bottom, r2.bottom) + padY;
             if (x < minX || x > maxX || y < minY || y > maxY) { return null; }
-            var mid = (r1.right + r2.left) / 2;
+            // 分界线取两盒之间间隙的中点(默认"最早"在左); 盒重叠或顺序
+            // 颠倒时退化取两个中心点的中点, 保证判定仍落在两者之间
+            var mid;
+            if (r1.right <= r2.left) { mid = (r1.right + r2.left) / 2; }
+            else if (r2.right <= r1.left) { mid = (r2.right + r1.left) / 2; }
+            else {
+                mid = ((r1.left + r1.right) / 2 + (r2.left + r2.right) / 2) / 2;
+            }
             return x < mid ? 'early' : 'latest';
         } catch (e) {
             return null;
@@ -522,33 +625,32 @@
         try {
             var tabs = getTabs();
             if (!tabs) { return; }
-            // 桥接模式: 排序全部由 notify 包装层对响应重排实现, 两个 tab 的
-            // 差别只在触发哪路请求——自派请求参数恒定(sort=1), 连续两次会
-            // 被原生桥按重复请求去重丢弃, 所以:
-            // - "最晚": 拦下原生(原生 sort=0 回显会把 activeSortId 打回热门),
-            //   自派 sort=1 的 sortChange 请求, wrapper 按降序重排;
-            // - "最早": 放行原生(handleSortChange 发 sort=2 热门请求, 与上次
-            //   参数必不同不会被去重), wrapper 把热门响应强制重排为升序,
-            //   高亮也随原生 activeSortId 走, 无需接管。
-            //   代价: 热门响应的回显让 activeSortId 停在热门 tab, 之后的
-            //   分页请求按热门排序翻页, 追加页由 wrapper 按页内升序排——
-            //   与 22.13 一致, 点过 tab 后整体顺序不再保证。
+            // 桥接模式: 两个 tab 全部放行原生点击(见头部注释第 3 条——
+            // 自派请求的响应必缺回复上下文数据, 冒号根因), 请求参数由应用
+            // 自己构造、形状必然兼容; 升/降序语义与请求的 sort 值无关,
+            // 全部由 notify 包装层按 selectedTab 对响应整体重排实现。
+            // 高亮完全交还原生: 原生点击处理会把激活态打在被点按钮上, 与
+            // 改名后标签天然一致, 脚本不写任何 class(见 applyTabStyle 注释)。
+            // 限制与 22.13 一致: 点过 tab 后分页请求按原 tab 语义翻页,
+            // 追加页由 wrapper 按页内重排——整体顺序不再保证。
             if (bridgeMode) {
                 var hit = tabHit(ev, tabs);
                 if (hit === 'latest') {
-                    if (bridgeDispatchRefresh()) {
-                        ev.preventDefault();
-                        ev.stopPropagation();
-                        userInteracted = true;
-                        selectedTab = 'latest';
-                        applyTabStyle();
-                        setTimeout(applyTabStyle, 80);
-                    }
+                    userInteracted = true;
+                    selectedTab = 'latest';
+                    // 放行前记录预备快照: 原生乐观渲染会把右侧点亮, 若该
+                    // 变更的 observer 窗口被错过(理论上不会, 直调已零滞后,
+                    // 此处纯兜底), applyTabStyle 可用 preSnap 恢复
+                    try {
+                        var t2 = getTabs();
+                        if (t2) { preSnap = { late: t2.latest.className, early: t2.early.className }; }
+                    } catch (e1) { }
                 } else if (hit === 'early') {
-                    // 放行原生, 只登记交互态与高亮预期
                     userInteracted = true;
                     selectedTab = 'early';
-                    applyTabStyle();
+                    // 切回"最早"后 pill 由原生回显驱动, 丢弃"最晚"抓拍
+                    latestSnap = null;
+                    preSnap = null;
                 }
                 return;
             }
@@ -591,6 +693,7 @@
                 if (userInteracted) {
                     userInteracted = false;
                     selectedTab = 'early';
+                    latestSnap = null;
                 }
             }
         } catch (e) { }
@@ -617,8 +720,9 @@
             bridgeListenerAttempts = 0;
         }
         if (bridgeMode) {
-            // 桥接模式: 数据在响应层重排, 高亮对齐沿用 applyTabStyle(按
-            // selectedTab), 轮询只剩改名/复原/高亮维护
+            // 桥接模式: 数据在响应层重排; "最晚"态由 applyTabStyle 用
+            // latestSnap 保持 pill(见其注释), "最早"态内部直退交还原生。
+            // 轮询还负责改名/文本复原
             applyTabStyle();
             setTimeout(poll, pollDelay());
             return;
@@ -640,6 +744,7 @@
                 tryBridge();
             }
         }
+        // applyTabStyle 仅供 Vue2 本地排序路径维护激活态(桥接模式内部直退)
         applyTabStyle();
         setTimeout(poll, pollDelay());
     }

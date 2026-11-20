@@ -388,6 +388,12 @@ object Logger {
         } catch (ignored: Throwable) {
         }
         try {
+            // 会话启动锚点: 与线程数巡检的后续增长曲线对齐, 判断泄漏的起点
+            val threads = NativeCrashGuard.readThreadsCount()
+            if (threads != null) log("线程数: $threads")
+        } catch (ignored: Throwable) {
+        }
+        try {
             log("原生日志: ${NativeCrashGuard.nativeLogPath() ?: "unavailable"}")
         } catch (ignored: Throwable) {
         }
