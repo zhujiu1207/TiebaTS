@@ -1,5 +1,7 @@
 # TiebaTS（贴吧TS）
 
+[![Telegram](https://img.shields.io/badge/Telegram-群组-26A5E4?logo=telegram&logoColor=white)](https://t.me/+S93Y8WbDEwczYjU1)
+
 > **项目延续说明**：本仓库是 [GuhDoy/TiebaTS](https://github.com/GuhDoy/TiebaTS)（已归档，2024-08 停更）的后续开发版本，原项目的功能在此基础之上继续维护与演进。感谢原作者与社区贡献者。
 
 一个基于 [libxposed API 102](https://github.com/libxposed/api) 的百度贴吧增强模块，注入宿主 `com.baidu.tieba`。
@@ -8,6 +10,8 @@
 - 最低支持宿主版本：12.53.1.0（`BuildConfig.MIN_VERSION`）
 - 系统要求：Android 9+（minSdk 28），**arm64-v8a** 设备
 - 运行框架：LSPosed（libxposed 新 API）或 LSPatch
+
+> **⚠️ 已知问题**：Android 16+ 设备上可能出现宿主闪退，具体原因暂不清楚（可能与新系统行为变化或 native 兼容性有关），目前正在排查。如果你在这类设备上遇到闪退，欢迎提供日志（模块设置里开启「运行日志」后导出）到 [Issues](../../issues)，或直接提交修复 PR——PR 建到本仓库即可。
 
 ## 功能一览
 

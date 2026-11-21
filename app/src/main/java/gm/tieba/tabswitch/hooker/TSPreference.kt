@@ -438,11 +438,23 @@ class TSPreference : XposedContext(), IHooker, Obfuscated {
             launchProxyPage(activity, EXTEND_MENU)
         })
 
+        preferenceLayout.addView(createButton("Git仓库", null, true) { _ ->
+            try {
+                activity.startActivity(Intent().apply {
+                    setAction("android.intent.action.VIEW")
+                    setData(Uri.parse("https://github.com/zhujiu1207/TiebaTS"))
+                })
+            } catch (tr: Throwable) {
+                // 与 TG群 同款降级: 无浏览器等场景提示, 不击穿点击监听
+                showTbToast("未找到可打开链接的应用", TbToast.LENGTH_SHORT)
+            }
+        })
+
         preferenceLayout.addView(createButton("TG群", "及时获取更新", true) { _ ->
             try {
                 activity.startActivity(Intent().apply {
                     setAction("android.intent.action.VIEW")
-                    setData(Uri.parse("https://t.me/TabSwitch"))
+                    setData(Uri.parse("https://t.me/+S93Y8WbDEwczYjU1"))
                 })
             } catch (tr: Throwable) {
                 // 无浏览器等场景降级提示, 不击穿点击监听

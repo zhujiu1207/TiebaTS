@@ -1,6 +1,7 @@
 package gm.tieba.tabswitch.hooker.auto
 
 import gm.tieba.tabswitch.logBoth
+import gm.tieba.tabswitch.util.toByteBuffer
 import org.json.JSONObject
 import java.io.IOException
 import java.math.BigInteger
@@ -34,6 +35,11 @@ object AutoSignHelper {
     // 偶发网络抖动会把当日 3 轮重试拖成上百次请求各挂 20s+
     private const val CONNECT_TIMEOUT_MS = 20_000
     private const val READ_TIMEOUT_MS = 30_000
+
+    // 响应体大小上限: 签到/关注列表接口正常响应为 KB 级 JSON, 上限只拦截被劫持/
+    // 风控页等异常超大响应的全量读入(内存尖峰乃至 OOM)。与 SaveImages 的
+    // MAX_IMAGE_BYTES、FileUtils.toByteBuffer 的既有口径保持一致
+    private const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
     fun setCookie(BDUSS: String) {
         sCookie = "BDUSS=$BDUSS"
@@ -88,13 +94,14 @@ object AutoSignHelper {
             val code = conn.responseCode
             if (code !in 200..299) {
                 // 消费错误响应体属协议收尾(不读流直接抛会让服务端/代理看到连接
-                // 在响应中途被弃); 随后 catch 路径会 disconnect, 错误连接不复用
-                runCatching { conn.errorStream?.use { it.readBytes() } }
+                // 在响应中途被弃); 随后 catch 路径会 disconnect, 错误连接不复用。
+                // 上限读入后即弃: 消费以归还连接为目的, 异常超大错误体不读全
+                runCatching { conn.errorStream?.use { toByteBuffer(it, MAX_RESPONSE_BYTES) } }
                 throw IOException("Response code: $code")
             }
             return conn.inputStream.use { stream ->
-                // 按字节读出后统一 UTF-8 解码, 不依赖平台按 Content-Type 猜字符集
-                String(stream.readBytes(), StandardCharsets.UTF_8)
+                // 带上限读出后统一 UTF-8 解码, 不依赖平台按 Content-Type 猜字符集
+                StandardCharsets.UTF_8.decode(toByteBuffer(stream, MAX_RESPONSE_BYTES)).toString()
             }
             // 不调 disconnect(): 读完整响应后平台自动把连接归还 keep-alive 池,
             // 显式 disconnect 反而强制关 socket, 破坏复用

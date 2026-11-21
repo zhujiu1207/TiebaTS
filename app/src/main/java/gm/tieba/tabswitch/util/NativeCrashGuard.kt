@@ -68,6 +68,9 @@ object NativeCrashGuard {
      */
     fun install(context: Context) {
         if (sInstalled.get()) return
+        // 线程数巡检与原生态可用性解耦: libhide 未就绪(LSPatch 下 hide_native 关闭)
+        // 时巡检照常运行——pthread_create OOM(EAGAIN)类崩溃与原生态无关
+        startThreadPatrol()
         try {
             val dir = File(context.filesDir, "tsnative")
             if (!dir.exists() && !dir.mkdirs()) {
@@ -108,6 +111,80 @@ object NativeCrashGuard {
                 "NativeCrashGuard: install skipped (预期内: libhide 未就绪, 稍后自动补装) -- $tr"
             )
         }
+    }
+
+    // ---------------------------------------------------------------- 线程数巡检
+    // pthread_create OOM(EAGAIN) 类崩溃的增长曲线留痕: 这类崩溃的致命现场
+    // (如 ScoutStateMachine)只是压垮时恰好创建子线程的倒霉线程, 真正的泄漏者
+    // 只能靠线程数随时间的增长曲线定位。主线程 Handler 每 60s 读一次
+    // /proc/self/status 的 Threads 行(数百字节, 开销可忽略), 不新建任何线程。
+    // 跟随运行日志开关: 关闭时只读数不留痕。总量或单分钟增量超阈值才写日志,
+    // 基线值在首次巡检时锚定一次; 命中阈值的行自带"导出 ps -T 普查"指引
+    private const val PATROL_INTERVAL_MS = 60_000L
+    private const val THREADS_WARN_TOTAL = 900L
+    private const val THREADS_WARN_DELTA = 150L
+
+    @Volatile
+    private var sPatrolStarted = false
+
+    // 以下两个仅主线程访问(巡检 tick 运行在主线程), 无需同步
+    private var sLastThreadsCount = -1L
+    private var sPatrolBaselineLogged = false
+
+    /** 启动线程数巡检: 与原生态可用性解耦, 进程早期调用一次。 */
+    private fun startThreadPatrol() {
+        if (sPatrolStarted) return
+        sPatrolStarted = true
+        try {
+            val handler = Handler(Looper.getMainLooper())
+            val tick = object : Runnable {
+                override fun run() {
+                    patrolThreads()
+                    handler.postDelayed(this, PATROL_INTERVAL_MS)
+                }
+            }
+            handler.postDelayed(tick, PATROL_INTERVAL_MS)
+        } catch (ignored: Throwable) {
+        }
+    }
+
+    private fun patrolThreads() {
+        try {
+            // 运行日志关闭时不留痕: 巡检是诊断设施, 不承担功能职责
+            if (!Logger.isEnabled()) return
+            val count = readThreadsCount() ?: return
+            val last = sLastThreadsCount
+            sLastThreadsCount = count
+            if (!sPatrolBaselineLogged) {
+                sPatrolBaselineLogged = true
+                Logger.log("线程数巡检: 基线 $count")
+                return
+            }
+            val delta = if (last >= 0) count - last else 0L
+            if (count >= THREADS_WARN_TOTAL || delta >= THREADS_WARN_DELTA) {
+                Logger.log(
+                    "线程数巡检: $count (+$delta/分钟) —— 疑似线程泄漏, " +
+                        "请导出 ps -T 线程普查定位增长来源"
+                )
+            }
+        } catch (ignored: Throwable) {
+        }
+    }
+
+    /** 读取 /proc/self/status 的 Threads 行; 读不到时返回 null。 */
+    internal fun readThreadsCount(): Long? = try {
+        java.io.File("/proc/self/status").bufferedReader().use { reader ->
+            var line = reader.readLine()
+            while (line != null) {
+                if (line.startsWith("Threads:")) {
+                    return@use line.substringAfter("Threads:").trim().toLongOrNull()
+                }
+                line = reader.readLine()
+            }
+            null
+        }
+    } catch (ignored: Throwable) {
+        null
     }
 
     /**
