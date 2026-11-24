@@ -20,6 +20,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <ucontext.h>
@@ -56,9 +57,27 @@
 // 64KB 尾部不受影响
 #define TS_MAX_LOGGED 256
 // 看门狗超时与轮询间隔: 5s 对正常处理器开销(ms 级)足够宽裕, 两阶段间隔
-// 同为 5s, 总兜底上限 10s
+// 同为 5s, 总兜底上限 10s。注意 5s 的判定基准是目标线程 CPU 时间涨幅而非
+// 墙钟(见 ts_watchdog_main 注释——小米 HyperOS 的进程冻结会把墙钟差撑过
+// 5s 造成误杀), 只有"无 CPU 涨幅的纯阻塞卡死"才退回墙钟兜底
 #define TS_WATCHDOG_TIMEOUT_MS 5000
 #define TS_WATCHDOG_POLL_MS 500
+// 线程 CPU 时间涨幅达到该值即认定真自旋卡死(11-15 事件的 _Unwind 不返回属
+// 此类, CPU 持续被吃); 被系统冻结/cgroup 限流时 CPU 时间不涨或缓慢, 不触发。
+// 1s 而非更小: 处理器正常执行(unwind 48 帧 + 数次落盘)CPU 涨幅远小于此
+#define TS_WATCHDOG_CPU_SPIN_NS 1000000000ULL
+// 无 CPU 涨幅(纯阻塞类卡死, 如死锁 futex)的墙钟兜底线: 此形态与"系统冻结"
+// 在进程内无法区分(CPU 都不走), 只能靠远超冻结窗口的墙钟兜底。小米 freezer
+// 单次冻结可达分钟级, 120s 仍可能撞上——但撞上需同时满足"恰有处理器在执行
+// (正常 <100ms)"与"冻结超 120s", 概率已压到极低; 而真楔死线程打转 2 小时
+// (11-15 事件)的损失远大于此, 保留兜底
+#define TS_WATCHDOG_BLOCKED_TIMEOUT_MS 120000
+// 原生日志体积上限: 心跳落盘是文件唯一的无界增长源(约 100B/min, 崩溃记录有
+// TS_MAX_LOGGED 封顶约 1.4MB)。超过上限后停止心跳落盘, 文件体积封顶在
+// 上限 + 崩溃记录余量以内。崩溃记录照常落盘不受影响(死亡时刻由崩溃记录自身的
+// time= 承载, alive 线索过期可接受)——不做改名轮转, 避免把崩溃证据挪出
+// 无 root 用户经导出按钮可达的主文件
+#define TS_NATIVE_LOG_MAX_BYTES (2 * 1024 * 1024)
 
 static char g_log_path[TS_PATH];
 static char g_proc_name[TS_PROC];
@@ -80,11 +99,21 @@ static volatile int g_logged = 0;
 // enter_ms 为 0 表示"当前无活跃处理器"; 置位顺序: in_handler 先置 1,
 // enter_ms 后登记(看门狗以两者同时有效为准), 注销时先清 enter_ms 再清
 // in_handler, 两个方向都不会让看门狗读到"in_handler=1 但 enter 已失效"。
-static volatile uint64_t g_handler_enter_ms = 0;
+static volatile uint64_t g_handler_enter_ms = 0; // 单调毫秒(ts_mono_ms), 与看门狗同源
 static volatile int g_handler_tid = 0;
 static volatile int g_handler_sig = 0;
+// 处理器进入时该线程的 CPU 时间(ns, CLOCK_THREAD_CPUTIME_ID, async-signal-safe)。
+// 看门狗据此区分"真自旋卡死"(CPU 涨)与"线程被系统冻结/限流"(CPU 不涨):
+// 小米 HyperOS 对退后台进程的 cgroup freezer 冻结墙钟照走, 2026-11 用户反馈
+// 小米(Android 16)闪退而 vivo 不崩——冻结 >5s 恰逢处理器在执行时, 旧版按
+// 墙钟差判卡死补投 SIGABRT 再 SIGKILL, 正是闪退根因。0 表示未登记(旧内核
+// clock_gettime 失败等), 看门狗遇 0 退回纯墙钟老逻辑
+static volatile uint64_t g_handler_cpu_enter_ns = 0;
 // 看门狗阶段: 0=未介入, 1=已补投 SIGABRT。防止每个轮询周期重复投递
 static volatile int g_watchdog_stage = 0;
+// "疑似冻结跳过杀链"诊断行只发一次: 冻结期间每个轮询周期(500ms)都会命中
+// 跳过分支, 不限流会刷爆日志
+static volatile int g_watchdog_frozen_logged = 0;
 
 // 被我们接管的信号及其原处理器
 // static: 不随 -fvisibility=hidden 的缺席(纯 Debug 构建)意外导出符号
@@ -250,10 +279,91 @@ static int ts_format_time(uint64_t epochMs, char *out) {
 }
 
 // 当前 epoch 毫秒。clock_gettime 走 vDSO, 无系统调用开销, 可在信号处理器内用。
+// 仅用于日志时间戳格式化(人类可读); 超时/节流判定一律用 ts_mono_ms——
+// REALTIME 会随用户手动改时间/NTP 校时跳变, watchdog 用它计 stuckMs 时
+// 回拨产生负差、前拨虚大, 都会误触发杀链
 static uint64_t ts_now_ms(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return 0;
     return (uint64_t) ts.tv_sec * 1000ULL + (uint64_t) (ts.tv_nsec / 1000000);
+}
+
+// 单调毫秒(开机起算, 不受改时间/NTP 影响, 但进程冻结期间照走——冻结的
+// 免疫靠 CPU 时间判定而非此时钟)。watchdog 轮询与心跳节流专用。
+static uint64_t ts_mono_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t) ts.tv_sec * 1000ULL + (uint64_t) (ts.tv_nsec / 1000000);
+}
+
+// 目标线程累计 CPU 时间(ns): /proc/self/task/<tid>/stat 的 utime+stime
+// (第 14/15 字段)。watchdog 普通上下文读取(信号处理器内读文件不
+// async-signal-safe, 处理器侧自身线程改用 CLOCK_THREAD_CPUTIME_ID,
+// 两者同源于内核 task 计数器, 数值可比)。线程被 cgroup freezer 冻结或
+// 调度限流期间该值不涨/缓涨——与"真自旋卡死"(CPU 持续被吃)的本质区别。
+// comm 段可能含空格与 ')' , 以最后一个 ')' 加空格为界取后续字段。
+// 打不开/解析失败返回 0, 调用方按"未知"退回墙钟老逻辑。
+static uint64_t ts_thread_cpu_ns(int tid) {
+    char path[64];
+    char buf[512];
+    int n = 0;
+    // pid 上限 7 位 + 固定骨架, 64 足够
+    path[n++] = '/'; path[n++] = 'p'; path[n++] = 'r'; path[n++] = 'o';
+    path[n++] = 'c'; path[n++] = '/'; path[n++] = 's'; path[n++] = 'e';
+    path[n++] = 'l'; path[n++] = 'f'; path[n++] = '/'; path[n++] = 't';
+    path[n++] = 'a'; path[n++] = 's'; path[n++] = 'k'; path[n++] = '/';
+    // 十进制 tid
+    if (tid <= 0) return 0;
+    char tidbuf[12];
+    int tn = 0;
+    int t = tid;
+    while (t > 0 && tn < 11) {
+        tidbuf[tn++] = (char) ('0' + t % 10);
+        t /= 10;
+    }
+    for (int i = tn - 1; i >= 0; --i) path[n++] = tidbuf[i];
+    path[n++] = '/';
+    path[n++] = 's'; path[n++] = 't'; path[n++] = 'a'; path[n++] = 't';
+    path[n] = '\0';
+
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    int total = 0;
+    while (total < (int) sizeof(buf) - 1) {
+        ssize_t got = read(fd, buf + total, sizeof(buf) - 1 - (size_t) total);
+        if (got <= 0) break;
+        total += (int) got;
+    }
+    close(fd);
+    buf[total] = '\0';
+
+    // 定位 comm 段右界 ") ": 内核线程 comm 可能含 ')' (如 "(arch_task)2"),
+    // 必须取最后一个 ')' 为界, 其后依次 state(1) ppid(2) ... utime(12) stime(13)
+    const char *p = buf;
+    const char *lastParen = nullptr;
+    while (*p != '\0') {
+        if (*p == ')') lastParen = p;
+        ++p;
+    }
+    if (lastParen == nullptr || lastParen[1] != ' ') return 0;
+    p = lastParen + 2;
+    // 跳过 state 与 ppid..cutime/cstime 共 11 个字段, 落到 utime
+    for (int field = 1; field <= 11; ++field) {
+        while (*p == ' ') ++p;
+        if (*p == '\0') return 0;
+        while (*p != ' ' && *p != '\0') ++p;
+        if (*p == '\0') return 0;
+    }
+    while (*p == ' ') ++p;
+    if (*p == '\0') return 0;
+    uint64_t utime = 0;
+    while (*p >= '0' && *p <= '9') { utime = utime * 10 + (uint64_t) (*p - '0'); ++p; }
+    while (*p == ' ') ++p;
+    uint64_t stime = 0;
+    while (*p >= '0' && *p <= '9') { stime = stime * 10 + (uint64_t) (*p - '0'); ++p; }
+    // CLK_TCK 恒为 100(bionic 固定), 每拍 10ms。硬编码避免 sysconf 在
+    // -nostdinc++ 零依赖约束下的额外依赖面
+    return (utime + stime) * 10000000ULL;
 }
 
 // ---------------------------------------------------------------- 落盘
@@ -550,6 +660,16 @@ static void ts_chain(int sig, siginfo_t *info, void *ucontext) {
 // 让说明行写不出来, 卡不死兜底本身。唯一残余风险: 说明行写挂会让看门狗线程
 // 卡在 write 里, 阶段2 的 SIGKILL 兜底失效, 只剩阶段1 的链路——此时阶段1
 // 已生效, 而"阶段1 也失败 + 存储故障"同时发生的概率可忽略。
+//
+// 卡死判定的时钟基准(2026-11 修正): 必须看目标线程 CPU 时间涨幅而非墙钟。
+// 小米 HyperOS 对退后台/锁屏的宿主进程做激进 cgroup freezer 冻结(单次可达
+// 分钟级, vivo 等厂商策略宽松不冻结——2026-11 用户反馈小米 Android 16 闪退
+// 而 vivo 不崩), 冻结墙钟照走: 旧版墙钟差在"冻结 >5s 恰逢处理器在执行"时
+// 会把冻结时长当成卡死时长, 解冻瞬间误投 SIGABRT/SIGKILL, 即用户侧闪退。
+// 真自旋卡死(11-15 事件的 _Unwind 不返回)CPU 持续被吃, 与冻结(不被调度,
+// CPU 不走)形态相反, 以此区分。无 CPU 涨幅的纯阻塞卡死(死锁 futex)与冻结
+// 在进程内不可分, 退墙钟超长兜底(TS_WATCHDOG_BLOCKED_TIMEOUT_MS); CPU
+// 基线登记失败(g_handler_cpu_enter_ns=0)同样退墙钟老逻辑。
 static void *ts_watchdog_main(void *arg) {
     (void) arg;
     for (;;) {
@@ -560,9 +680,39 @@ static void *ts_watchdog_main(void *arg) {
         if (enter == 0) continue;
         int tid = __atomic_load_n(&g_handler_tid, __ATOMIC_ACQUIRE);
         if (tid <= 0) continue;
-        uint64_t stuckMs = ts_now_ms() - enter;
+        uint64_t stuckMs = ts_mono_ms() - enter;
         if (stuckMs < (uint64_t) TS_WATCHDOG_TIMEOUT_MS) continue;
         int sig = __atomic_load_n(&g_handler_sig, __ATOMIC_ACQUIRE);
+
+        // 卡死分型: CPU 时间涨幅 ≥1s = 目标线程在被调度下空转 = 真卡死;
+        // ≈0 = 线程未被调度(系统冻结/限流)或纯阻塞, 走超长兜底。CPU 基线
+        // 未登记(=0)或 /proc 读取失败(0)时 cpuNow 与基线同值, 涨幅 0 ——
+        // 与"疑似冻结"分支一致, 由超长墙钟兜底覆盖, 不误杀
+        uint64_t cpuEnter = __atomic_load_n(&g_handler_cpu_enter_ns, __ATOMIC_ACQUIRE);
+        uint64_t cpuNow = ts_thread_cpu_ns(tid);
+        bool spinning = cpuEnter != 0 && cpuNow != 0 &&
+                        cpuNow - cpuEnter >= TS_WATCHDOG_CPU_SPIN_NS;
+        if (!spinning && stuckMs < (uint64_t) TS_WATCHDOG_BLOCKED_TIMEOUT_MS) {
+            // 疑似系统冻结/纯阻塞: 跳过杀链等待解冻, 诊断行只发一次防刷屏
+            if (__atomic_load_n(&g_watchdog_frozen_logged, __ATOMIC_RELAXED) == 0) {
+                __atomic_store_n(&g_watchdog_frozen_logged, 1, __ATOMIC_RELAXED);
+                char buf[224];
+                int off = 0;
+                buf[0] = '\0';
+                char timeBuf[32];
+                ts_format_time(ts_now_ms(), timeBuf);
+                off = ts_append_str(buf, off, "[");
+                off = ts_append_str(buf, off, timeBuf);
+                off = ts_append_str(buf, off, "] pid=");
+                off = ts_append_dec(buf, off, (uint64_t) getpid());
+                off = ts_append_str(buf, off, " watchdog: 线程 CPU 无涨幅(墙钟已 ");
+                off = ts_append_dec(buf, off, stuckMs);
+                off = ts_append_str(buf, off, "ms), 疑似系统冻结/阻塞, 跳过补投\n");
+                ts_emit(buf, off);
+            }
+            continue;
+        }
+
         if (__atomic_load_n(&g_watchdog_stage, __ATOMIC_ACQUIRE) == 0) {
             __atomic_store_n(&g_watchdog_stage, 1, __ATOMIC_RELEASE);
             // 投递先于说明落盘: 投递是安全攸关动作且是纯信号操作(不碰文件,
@@ -584,9 +734,14 @@ static void *ts_watchdog_main(void *arg) {
             off = ts_append_dec(buf, off, (uint64_t) tid);
             off = ts_append_str(buf, off, " 已 ");
             off = ts_append_dec(buf, off, stuckMs);
-            off = ts_append_str(buf, off, "ms, 补投 SIGABRT 争取 tombstone\n");
+            off = ts_append_str(buf, off, spinning ? "ms, CPU 涨幅证实自旋, 补投 SIGABRT 争取 tombstone\n"
+                                                   : "ms, 无 CPU 涨幅按阻塞兜底, 补投 SIGABRT\n");
             ts_emit(buf, off);
-        } else if (stuckMs >= 2 * (uint64_t) TS_WATCHDOG_TIMEOUT_MS) {
+        } else if (stuckMs >= (uint64_t) TS_WATCHDOG_TIMEOUT_MS + (spinning ? (uint64_t) TS_WATCHDOG_TIMEOUT_MS : (uint64_t) TS_WATCHDOG_BLOCKED_TIMEOUT_MS)) {
+            // 阶段2 每轮重算分型: 若 SIGABRT 后目标线程已死, /proc/<tid> 打开
+            // 失败 → cpuNow=0 → spinning=false → 阈值退化为 125s —— 有意如此:
+            // 线程已死时 SIGABRT 已在途(debuggerd tombstone 在生成), 进程级
+            // SIGKILL 只是超长兜底, 不必赶在 10s
             syscall(__NR_tgkill, getpid(), (long) tid, SIGKILL);
             // 双保险: 线程定向 SIGKILL 理论必死, 进程级再补一刀无副作用
             syscall(__NR_kill, getpid(), SIGKILL);
@@ -602,11 +757,22 @@ static void ts_handler(int sig, siginfo_t *info, void *ucontext) {
         __atomic_load_n(&g_logged, __ATOMIC_RELAXED) < TS_MAX_LOGGED) {
         g_in_handler = 1;
         // 看门狗登记(见 g_handler_* 注释): 先清阶段、登记线程/信号、最后
-        // 写入进入时刻让看门狗开始计时
+        // 写入进入时刻让看门狗开始计时。enter 用单调钟——watchdog 以
+        // ts_mono_ms()-enter 求 stuckMs, 两端必须同源(REALTIME 混入会因
+        // epoch 与开机毫秒的量级差下溢成巨数, 卡死短路完全失效)。
+        // CPU 基线与墙钟同拍登记(clock_gettime async-signal-safe, 读的是
+        // 处理器线程自身; 失败留 0, 看门狗退回墙钟)
         __atomic_store_n(&g_watchdog_stage, 0, __ATOMIC_RELAXED);
         __atomic_store_n(&g_handler_tid, (int) syscall(__NR_gettid), __ATOMIC_RELAXED);
         __atomic_store_n(&g_handler_sig, sig, __ATOMIC_RELAXED);
-        __atomic_store_n(&g_handler_enter_ms, ts_now_ms(), __ATOMIC_RELAXED);
+        __atomic_store_n(&g_handler_enter_ms, ts_mono_ms(), __ATOMIC_RELAXED);
+        uint64_t cpuNs = 0;
+        struct timespec cpuTs;
+        if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpuTs) == 0) {
+            cpuNs = (uint64_t) cpuTs.tv_sec * 1000000000ULL + (uint64_t) cpuTs.tv_nsec;
+        }
+        __atomic_store_n(&g_handler_cpu_enter_ns, cpuNs, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_watchdog_frozen_logged, 0, __ATOMIC_RELAXED);
         __atomic_fetch_add(&g_logged, 1, __ATOMIC_RELAXED);
         char buf[TS_BUF];
         int off = 0;
@@ -640,6 +806,7 @@ static void ts_handler(int sig, siginfo_t *info, void *ucontext) {
         ts_emit(buf, off);
         // 注销看门狗登记: 先清 enter(0 = 无活跃处理器)再清 in_handler
         __atomic_store_n(&g_handler_enter_ms, 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&g_handler_cpu_enter_ns, 0, __ATOMIC_RELAXED);
         g_in_handler = 0;
     }
     ts_chain(sig, info, ucontext);
@@ -784,21 +951,30 @@ void ts_crash_heartbeat(const char *detail) {
     ts_push_event("alive", detail);
     // 每 TS_HEARTBEAT_FLUSH_S 秒落盘一条, 让日志文件本身也有"活到什么时候"的证据。
     // 用 atomic 而非普通 static: 心跳虽由主线程驱动, 但多进程/多线程下
-    // 仍可能并发进入, 非原子读改写会让节流失效并刷爆日志文件
+    // 仍可能并发进入, 非原子读改写会让节流失效并刷爆日志文件。
+    // 节流判定用单调时钟: REALTIME 随改时间/NTP 跳变, 前拨会让节流被虚
+    // 触发连刷落盘, 回拨则长时间静默; 落盘行的时间戳仍取 epoch(人类可读)
     static uint64_t lastFlush = 0;
-    uint64_t now = ts_now_ms();
+    uint64_t nowMono = ts_mono_ms();
     uint64_t prev = __atomic_load_n(&lastFlush, __ATOMIC_RELAXED);
-    if (prev != 0 && now - prev < (uint64_t) TS_HEARTBEAT_FLUSH_S * 1000ULL) return;
+    if (prev != 0 && nowMono - prev < (uint64_t) TS_HEARTBEAT_FLUSH_S * 1000ULL) return;
     // CAS 失败说明别的线程刚抢到落盘权, 让给它即可
-    if (!__atomic_compare_exchange_n(&lastFlush, &prev, now, false,
+    if (!__atomic_compare_exchange_n(&lastFlush, &prev, nowMono, false,
                                      __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        return;
+    }
+    // 体积守卫(见 TS_NATIVE_LOG_MAX_BYTES): 此处是心跳线程的普通上下文,
+    // stat 安全; 超限后只停心跳落盘, 环形缓冲的 alive 事件照常记录
+    // (崩溃 dump 仍能看到最近的存活事件)
+    struct stat st;
+    if (stat(g_log_path, &st) == 0 && st.st_size > TS_NATIVE_LOG_MAX_BYTES) {
         return;
     }
     char buf[TS_BUF];
     int off = 0;
     buf[0] = '\0';
     char timeBuf[32];
-    ts_format_time(now, timeBuf);
+    ts_format_time(ts_now_ms(), timeBuf);
     off = ts_append_str(buf, off, "[");
     off = ts_append_str(buf, off, timeBuf);
     off = ts_append_str(buf, off, "] pid=");

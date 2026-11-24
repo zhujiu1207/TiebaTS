@@ -27,7 +27,11 @@ internal object PurgeAdKeys {
 
     internal const val PB_PAGE_REQUEST_MESSAGE = "com.baidu.tieba.pb.PbPageRequestMessage"
     internal const val PAGE_BROWSER_REQUEST_MESSAGE = "com.baidu.tieba.pb.pagebrowser.net.PageBrowserRequestMessage"
-    internal const val PB_LIST_DATA_REQ_BUILDER = "tbclient.PbList\$DataReq\$Builder"
+    // 注意 PbList 是包目录不是类(jadx 四版本布局一致: PbList.java 不存在,
+    // DataReq.java 在 tbclient/PbList/ 包下, Builder 内嵌于 DataReq)——
+    // 旧写法 "tbclient.PbList$DataReq$Builder" 的二进制名不存在, findClass 必抛
+    // ClassNotFoundError 被消费点吞掉, 钩点全版本静默失效(2026-11-21 审查修正)
+    internal const val PB_LIST_DATA_REQ_BUILDER = "tbclient.PbList.DataReq\$Builder"
     internal val PB_REQUEST_CLEAR_FIELDS = arrayOf(
         "adxBearBannerStr", "adxBearCommentStr", "adExternalBannerStr", "adExternalCommentStr"
     )
@@ -44,7 +48,9 @@ internal object PurgeAdKeys {
     internal const val PB_FALLING_SHOW = "C"
 
     internal const val FRS_DATA_RES_BUILDER = "tbclient.FrsPage.DataRes\$Builder"
-    internal const val FRS_BUSINESS_PROMOT = "tbclient.FrsPage\$BusinessPromot"
+    // FrsPage 同为包目录, BusinessPromot.java 是包内顶层类: 旧写法 "$" 形式类名
+    // 不存在, 消费点的参数类型钉死防线曾无声丢失(靠唯一候选兜底巧合命中)
+    internal const val FRS_BUSINESS_PROMOT = "tbclient.FrsPage.BusinessPromot"
     internal val FRS_POP_FIELDS = arrayOf(
         "bawutask_pop", "sprite_bubble_guide", "frsmask_pop_info", "enter_pop_info", "frs_rain_info"
     )

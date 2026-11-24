@@ -159,7 +159,7 @@ class HomeSearchIcon : XposedContext(), IHooker {
     private fun hideSearchBarRow(view: View) {
         try {
             val row = view.parent as? View ?: return
-            (row.layoutParams as? ViewGroup.LayoutParams)?.let {
+            row.layoutParams?.let {
                 it.height = 0
                 row.layoutParams = it
             }

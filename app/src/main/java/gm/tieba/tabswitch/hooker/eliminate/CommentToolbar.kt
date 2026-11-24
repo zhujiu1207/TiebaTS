@@ -106,7 +106,7 @@ object CommentToolbar : XposedContext(), IHooker {
             if (value.isEmpty()) {
                 continue
             }
-            val isIconList = value.count { it is View && idOf(it as View) != null } >= 4
+            val isIconList = value.count { it is View && idOf(it) != null } >= 4
             if (isIconList && value.size >= 4) {
                 @Suppress("UNCHECKED_CAST")
                 return value as MutableList<Any>
@@ -121,7 +121,7 @@ object CommentToolbar : XposedContext(), IHooker {
     private fun reorderIcons(bar: Any) {
         val list = iconListField(bar) ?: return
         val items = list.toList()
-        val iconItems = items.filter { it is View && idOf(it as View) != null }
+        val iconItems = items.filter { it is View && idOf(it) != null }
         if (iconItems.size < 4) {
             return
         }

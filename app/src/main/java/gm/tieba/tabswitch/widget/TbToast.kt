@@ -62,8 +62,12 @@ class TbToast : XposedContext(), Obfuscated {
             sToastMethod?.let { return it }
             val now = System.currentTimeMillis()
             val last = sToastMethodResolvedAt
-            sToastMethodResolvedAt = now
+            // 窗口判定必须先于时间戳推进: 先推进再判定会把"每 60s 允许重试一次"
+            // 退化成"静默 60s 后才重试"——连续调用(错误提示循环)会永远滑动窗口,
+            // 规则库就绪后的重查被饿死。推进仅在真正执行查询时发生, 失败也计入
+            // (防 DB 异常期每次弹 toast 都同步查 SQLite)
             if (last != 0L && now - last < TOAST_RESOLVE_RETRY_INTERVAL_MS) return null
+            sToastMethodResolvedAt = now
             var found: Method? = null
             AcRules.findRule(TOAST_RULE_KEY) { _, clazz, _ ->
                 try {

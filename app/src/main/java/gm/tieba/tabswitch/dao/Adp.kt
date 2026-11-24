@@ -32,16 +32,25 @@ object Adp : XposedContext() {
     }
 
     private fun refreshAccountData() {
-        // 未登录阶段 getter 返回 null, 用 as? 避免每次回调 NPE 刷日志
-        hookAfterMethod("com.baidu.tbadk.core.data.AccountData", "getBDUSS") { param ->
-            BDUSS = param.result as? String
-        }
-        hookAfterMethod("com.baidu.tbadk.core.data.AccountData", "getTbs") { param ->
-            tbs = param.result as? String
-        }
-        hookAfterMethod("com.baidu.tbadk.core.data.AccountData", "getAccount") { param ->
-            account = param.result as? String
-        }
+        // 三个钩子逐点隔离: 单个注册失败(类/方法漂移)只损失该字段,
+        // 不让 getBDUSS 的失败连带丢掉 getTbs(自动签到全废)与 getAccount
+        // (抽奖账号候选丢失)
+        runCatching {
+            // 未登录阶段 getter 返回 null, 用 as? 避免每次回调 NPE 刷日志
+            hookAfterMethod("com.baidu.tbadk.core.data.AccountData", "getBDUSS") { param ->
+                BDUSS = param.result as? String
+            }
+        }.onFailure { logBoth("Adp: getBDUSS hook 注册失败 -- ${it.javaClass.simpleName}") }
+        runCatching {
+            hookAfterMethod("com.baidu.tbadk.core.data.AccountData", "getTbs") { param ->
+                tbs = param.result as? String
+            }
+        }.onFailure { logBoth("Adp: getTbs hook 注册失败 -- ${it.javaClass.simpleName}") }
+        runCatching {
+            hookAfterMethod("com.baidu.tbadk.core.data.AccountData", "getAccount") { param ->
+                account = param.result as? String
+            }
+        }.onFailure { logBoth("Adp: getAccount hook 注册失败 -- ${it.javaClass.simpleName}") }
     }
 
     private fun refreshCache() {

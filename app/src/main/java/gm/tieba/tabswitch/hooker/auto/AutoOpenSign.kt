@@ -3,6 +3,7 @@ package gm.tieba.tabswitch.hooker.auto
 import android.app.Activity
 import android.os.Bundle
 import gm.tieba.tabswitch.XposedContext
+import gm.tieba.tabswitch.dao.Preferences.clearOpenSignDate
 import gm.tieba.tabswitch.dao.Preferences.getIsOpenSignShown
 import gm.tieba.tabswitch.dao.Preferences.putOpenSignDate
 import gm.tieba.tabswitch.hooker.IHooker
@@ -36,7 +37,10 @@ class AutoOpenSign : XposedContext(), IHooker {
             "onCreate", Bundle::class.java
         ) { param ->
             // 当日已拉起过即跳过: 标记在发起时落盘(不依赖用户是否真的完成签到),
-            // Activity 重建(主题切换/授权回归)重入 onCreate 也不会二次弹页
+            // Activity 重建(主题切换/授权回归)重入 onCreate 也不会二次弹页。
+            // 拉起失败时清除标记回滚: 反射漂移/同类页限流类失败回滚后当天后续
+            // 冷启动可重试, 不把失败静默烧满一天; 成功路径保持"发起即标记"的
+            // 防重入语义(延迟窗内二次 onCreate 仍被标记拦住)
             if (getIsOpenSignShown()) return@hookAfterMethod
             val activity = param.thisObject as? Activity ?: return@hookAfterMethod
             val cal = java.util.Calendar.getInstance()
@@ -44,7 +48,10 @@ class AutoOpenSign : XposedContext(), IHooker {
             val main = android.os.Handler(android.os.Looper.getMainLooper())
             main.postDelayed({
                 runCatching { openSignActivity(activity) }
-                    .onFailure { logBoth("AutoOpenSign 打开签到界面失败 -- $it") }
+                    .onFailure {
+                        logBoth("AutoOpenSign 打开签到界面失败 -- $it")
+                        clearOpenSignDate()
+                    }
             }, OPEN_DELAY_MS)
         }
     }

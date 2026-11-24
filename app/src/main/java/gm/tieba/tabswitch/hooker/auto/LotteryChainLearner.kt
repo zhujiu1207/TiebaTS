@@ -62,7 +62,11 @@ internal object LotteryChainLearner {
     // 发送方向只做链路学习（供抽奖发送使用）；接收方向替换为带毒消息屏蔽的实现——
     // 客户端转换器对未知类型/未知 notify_cmd 的消息直接抛异常，多播、进房同步、
     // 历史加载全走这同一个转换器，一个毒消息即可让频道卡死（收不到任何新消息）。
-    // 捕获异常后以占位文本消息顶替，批次继续、同步游标前进（占位不落库，仅本次列表可见）
+    // 转换异常（含毒消息判定命中）时直接返回 null 丢弃该条（既有行为，审查轮仅
+    // 修正注释——旧注释"以占位文本消息顶替"描述的实现从未存在）: 批次内其余
+    // 条目照常转换，该条不产生任何数据。宿主对 null 转换结果的容忍度未经专项
+    // 实证（毒消息样本触发路径较罕见），若模拟器复现毒消息场景异常需回查此处；
+    // 不构造占位消息，避免伪造条目混入列表
     private fun learnConverterClasses() {
         val tbBaseMsgClass = findClass("com.baidu.tieba.im.lib.socket.msg.TbBaseMsg")
         val chatMsgSdkClass = findClass(LOTTERY_CHAT_MSG_SDK)
@@ -156,8 +160,7 @@ internal object LotteryChainLearner {
         tbMsg: Any,
         tbBaseMsgClass: Class<*>,
         chatMsgSdkClass: Class<*>,
-        groupMarker: Any?,
-        roomId: Long
+        groupMarker: Any?
     ): Any? {
         if (!mChainLearned) return null
         val conv = mConvVe

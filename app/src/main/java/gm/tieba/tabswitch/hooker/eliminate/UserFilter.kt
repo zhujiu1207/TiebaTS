@@ -252,20 +252,17 @@ class UserFilter : XposedContext(), IHooker, KeywordFilter {
         ) {
             loadMapIfNeeded()
             val normalized = key.lowercase()
-            var changed = false
             synchronized(map) {
                 if (map[normalized] == internalId) return
                 // 上限兜底防无界增长: 宿主 share 流程的同 cmd 查询也会顺带入表
                 if (map.size >= MAX_MAP_ENTRIES && !map.containsKey(normalized)) return
                 map[normalized] = internalId
-                changed = true
                 Preferences.putString(mapKey, map.entries.joinToString("$MAP_SECTION") {
                     "${it.key}$MAP_PAIR${it.value}"
                 })
             }
-            if (changed) {
-                Logger.log("过滤用户: $logTag $key -> $internalId")
-            }
+            // 能走到这里即发生过写入(上方两处 return 已拦截未写场景)
+            Logger.log("过滤用户: $logTag $key -> $internalId")
         }
 
         fun putMapping(tiebaUid: String, internalId: String) {

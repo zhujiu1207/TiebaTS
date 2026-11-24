@@ -33,9 +33,8 @@
     @androidx.annotation.Keep <methods>;
 }
 
-# Room 生成的实现类由反射按命名约定加载
--keep class * extends androidx.room.RoomDatabase { *; }
--keep @androidx.room.Entity class * { *; }
+# (Room keep 规则已删: 规则库改为 framework SQLiteOpenHelper 手写实现,
+#  无反射加载的生成类, 无需保留)
 
 # DexKit: libdexkit.so 仅以 Java_org_luckypray_dexkit_DexKitBridge_native* 与
 # Java_..._NativeReflect_* 符号为 JNI 入口(so 内字节串实测无指向其他包装类的

@@ -75,8 +75,6 @@ internal object PurgeAdFeedCards {
         return md?.let { runCatching { it.invoke(item) as? String }.getOrNull() }
     }
 
-    // 旧版本兜底方法按类缓存: null 表示该类确无 String 返回方法, 同样缓存避免重复扫描
-
     // 22.11+: 推荐流为模板卡片体系(fs9), 卡片类型由模板键 fs9.b() 标识,
     // 入口参照 PurgeVideo 的定位: TemplateAdapter.setList 与 FeedTemplateAdapter 的 L/P/R。
     // 列表入口 hook 统一走 FeedListPipeline(单 hook 多阶段链), 此处只注册阶段

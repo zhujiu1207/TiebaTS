@@ -13,7 +13,6 @@ import android.widget.TextView
 import gm.tieba.tabswitch.bridge.XC_MethodHook
 import gm.tieba.tabswitch.bridge.XposedBridge
 import gm.tieba.tabswitch.bridge.XposedHelpers
-import gm.tieba.tabswitch.bridge.XposedHelpers.ClassNotFoundError
 import gm.tieba.tabswitch.XposedContext
 import gm.tieba.tabswitch.dao.Preferences.getBoolean
 import gm.tieba.tabswitch.hooker.IHooker

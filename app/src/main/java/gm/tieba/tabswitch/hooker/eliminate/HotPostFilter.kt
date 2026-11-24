@@ -1,6 +1,5 @@
 package gm.tieba.tabswitch.hooker.eliminate
 
-import android.util.Log
 import gm.tieba.tabswitch.XposedContext
 import gm.tieba.tabswitch.hooker.IHooker
 import gm.tieba.tabswitch.util.Logger
@@ -32,8 +31,9 @@ class HotPostFilter : XposedContext(), IHooker {
 
     private val loggedSigs = HashSet<String>(64)
 
+    // 走模块日志而非 logcat 直写: 与运行日志开关语义一致(诊断只在用户要求留痕时落盘)
     private fun logDiag(msg: String) {
-        Log.e("TiebaTS", "[HotPostDiag] $msg")
+        Logger.log("[HotPostDiag] $msg")
     }
 
     // 同一签名只记一次, 上限 300 条防刷屏
@@ -132,7 +132,7 @@ class HotPostFilter : XposedContext(), IHooker {
     private fun innerSchema(element: Any): String? {
         for (accessor in resolveMapAccessors(element.javaClass)) {
             val map = runCatching { accessor(element) }.getOrNull() ?: continue
-            val schema = map?.get("schema")?.toString()?.takeIf { it.isNotEmpty() } ?: continue
+            val schema = map.get("schema")?.toString()?.takeIf { it.isNotEmpty() } ?: continue
             return schema
         }
         return null
@@ -241,7 +241,7 @@ class HotPostFilter : XposedContext(), IHooker {
     private fun innerCardType(element: Any): String? {
         for (accessor in resolveMapAccessors(element.javaClass)) {
             val map = runCatching { accessor(element) }.getOrNull() ?: continue
-            val type = map?.get("card_type")?.toString()?.takeIf { it.isNotEmpty() } ?: continue
+            val type = map.get("card_type")?.toString()?.takeIf { it.isNotEmpty() } ?: continue
             return type
         }
         return null

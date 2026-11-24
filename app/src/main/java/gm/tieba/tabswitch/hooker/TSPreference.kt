@@ -265,7 +265,7 @@ class TSPreference : XposedContext(), IHooker, Obfuscated {
                 gravity = android.view.Gravity.RIGHT or android.view.Gravity.CENTER_VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
                 setOnClickListener { _ ->
-                    exportNativeLog(activity)
+                    exportNativeLog()
                 }
             }
             // 追加到标题区末尾(标题 TextView 与隐藏 ImageView 之后):
@@ -280,7 +280,7 @@ class TSPreference : XposedContext(), IHooker, Obfuscated {
     // 原生日志导出到"运行日志"所选的同一目录(TiebaTS.txt 旁边生成
     // TiebaTS-native.txt), 用户在文件管理器即可取到, 不走分享面板。
     // 失败信息明确到动作: 未配置目录→先开运行日志; 无记录→本身也是排查结论
-    private fun exportNativeLog(activity: Activity) {
+    private fun exportNativeLog() {
         try {
             val dir = Logger.exportNativeLogToLogDir(getContext())
             showTbToast("已导出到 $dir/TiebaTS-native.txt", TbToast.LENGTH_LONG)
@@ -497,6 +497,8 @@ class TSPreference : XposedContext(), IHooker, Obfuscated {
         preferenceLayout.addView(SwitchButtonHolder(activity, "隐藏侧边栏", "hide_sidebar", SwitchButtonHolder.TYPE_SWITCH))
         preferenceLayout.addView(SwitchButtonHolder(activity, "首页搜索栏固定为放大镜", "home_search_icon", SwitchButtonHolder.TYPE_SWITCH))
         preferenceLayout.addView(SwitchButtonHolder(activity, "隐藏消息页群聊横幅", "purge_chat_float", SwitchButtonHolder.TYPE_SWITCH))
+        // 图片查看器底部「✨AI加料」跳转胶囊, 见 HideAiCard
+        preferenceLayout.addView(SwitchButtonHolder(activity, "隐藏AI加料", "hide_ai_card", SwitchButtonHolder.TYPE_SWITCH))
         preferenceLayout.addView(SwitchButtonHolder(activity, "隐藏首页", "home_recommend", SwitchButtonHolder.TYPE_SWITCH))
         preferenceLayout.addView(SwitchButtonHolder(activity, "隐藏进吧", "enter_forum", SwitchButtonHolder.TYPE_SWITCH))
         preferenceLayout.addView(SwitchButtonHolder(activity, "隐藏发帖", "write_thread", SwitchButtonHolder.TYPE_SWITCH))

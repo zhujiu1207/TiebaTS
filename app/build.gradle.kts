@@ -1,9 +1,10 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.tasks.TaskAction
 import java.util.Properties
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("com.google.devtools.ksp")
 }
 
 // 固定版本号: 不再从 git 历史推导
@@ -30,7 +31,7 @@ android {
         minSdk = 28
         targetSdk = targetSdkVersion
         versionCode = commitCount
-        versionName = "5.2.6"
+        versionName = "5.2.7"
         if (versionName!!.contains("alpha") || versionName!!.contains("beta")) {
             versionNameSuffix = ".$commitCountSinceLatestTag"
         }
@@ -124,7 +125,11 @@ android {
                 "/META-INF/com/**",
                 "/META-INF/versions/**",
                 "/META-INF/services/**",
-                "/kotlin/**"
+                "/kotlin/**",
+                // AGP 内嵌的构建工具链元数据与 git 仓库信息, 运行时无用;
+                // 后者顺带避免把本地仓库远端 URL 写进发布产物
+                "/kotlin-tooling-metadata.json",
+                "/META-INF/version-control-info.textproto"
             )
         )
         jniLibs.excludes.addAll(listOf("**/liblog.so", "/lib/x86/**", "/lib/x86_64/**", "/lib/armeabi-v7a/**"))
@@ -144,12 +149,6 @@ dependencies {
     // legacy-only 框架不再支持)。compileOnly——运行时由框架注入
     compileOnly("io.github.libxposed:api:102.0.0")
     api("androidx.annotation:annotation:1.7.1")
-
-    val roomVersion = "2.6.1"
-    // 不引 room-ktx: DAO 全部为阻塞式 List 查询, 无 suspend/Flow 用法, ktx 只是
-    // 往 dex 里带进整条 kotlinx-coroutines 依赖链
-    implementation("androidx.room:room-runtime:$roomVersion")
-    ksp("androidx.room:room-compiler:$roomVersion")
 
     // DexKit 2.0.6 起才支持 16KB 页内核: 2.0.1 的 libdexkit.so 实测 PT_LOAD 仅
     // 4KB 对齐, 16KB 页设备上动态链接器直接拒载, 反混淆整体失效。
@@ -172,26 +171,27 @@ dependencies {
     testImplementation("io.github.libxposed:api:102.0.0")
 }
 
-// 本机 adb 路径固定; 换机器时回退到 PATH 中的 adb(找不到则该任务失败并提示)
-val adbExecutable: String =
-    if (File("D:\\Android\\Sdk\\platform-tools\\adb.exe").exists()) {
-        "D:\\Android\\Sdk\\platform-tools\\adb.exe"
-    } else {
-        "adb"
-    }
-
-tasks.register("restartTieba") {
-    doLast {
-        exec {
-            commandLine(adbExecutable, "shell", "am", "force-stop", "com.baidu.tieba")
-        }
+// 任务级进程执行用 ProcessBuilder: Project.exec 在 Gradle 9 已移除,
+// ExecOperations 注入对这个一次性任务过重, 直接走 JDK 标准进程 API
+abstract class RestartTiebaTask : DefaultTask() {
+    @TaskAction
+    fun restart() {
+        val adb =
+            if (File("D:\\Android\\Sdk\\platform-tools\\adb.exe").exists()) {
+                "D:\\Android\\Sdk\\platform-tools\\adb.exe"
+            } else {
+                "adb"
+            }
+        ProcessBuilder(adb, "shell", "am", "force-stop", "com.baidu.tieba")
+            .inheritIO().start().waitFor()
         // monkey 启动方式与《签名命令.txt》一致: "$(pm resolve-activity ...)"
         // 输出为多行 key=value, am start 无法直接消费
-        exec {
-            commandLine(adbExecutable, "shell", "monkey", "-p", "com.baidu.tieba", "1")
-        }
+        ProcessBuilder(adb, "shell", "monkey", "-p", "com.baidu.tieba", "1")
+            .inheritIO().start().waitFor()
     }
 }
+
+tasks.register<RestartTiebaTask>("restartTieba")
 
 afterEvaluate {
     tasks.named("installDebug").configure {

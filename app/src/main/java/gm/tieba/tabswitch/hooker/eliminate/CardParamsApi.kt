@@ -44,6 +44,9 @@ object CardParamsApi : XposedContext() {
     @Volatile
     private var holderAMethod: Method? = null
 
+    // @Synchronized: 主线程与后台解码线程可能并发首调(与 Fs9Api.resolve 同口径),
+    // 候选循环幂等, 加锁只为"每进程只跑一次"的注释承诺成立
+    @Synchronized
     fun resolve(): Boolean {
         if (resolved) return paramClass != null
         for (name in PARAM_CANDIDATES) {

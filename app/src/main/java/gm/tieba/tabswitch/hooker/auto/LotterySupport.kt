@@ -119,6 +119,10 @@ internal class LotteryRoomTask(
     // 房间本身没有群助手（系统消息群/私聊等）：重试与补发轮必然再失败,
     // 置位后跳过, 省去每轮约 5s×N 的无效重试
     var noAssistant: Boolean = false
+    // 确定性发送失败（uk→uid 换算失败 err(botUid=0) 等）：与瞬时失败不同,
+    // 重试/补发重付完整进房+详情流程后必然同样失败, 置位后从重试与补发
+    // 名单剔除, 结果仍计入最终汇总的失败项
+    var fatalFail: Boolean = false
 }
 
 // 消息时间归一化为毫秒（>1e11 视为已是毫秒，否则按秒）

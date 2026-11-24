@@ -129,8 +129,11 @@ class PurgeChatFloat : XposedContext(), IHooker {
             arrayOf(View::class.java),
             arrayOf(View::class.java, Int::class.javaPrimitiveType),
             arrayOf(View::class.java, ViewGroup.LayoutParams::class.java),
-            // 终端实现: 前三个重载全部委托给它, 应用直接调 3 参形式的调用
-            // 完全绕过上面三个 hook(Xposed 只 hook 被调用的具体实现)
+            // 覆盖范围注意: 后两个重载 (View,LayoutParams)/(View,int,LayoutParams) 在
+            // ViewGroup 中是抽象方法, LinearLayout 等子类实现不经 ViewGroup 方法体,
+            // 直接以这两个形式发起的 addView 拦不到(Xposed 只 hook 被调用的具体实现)——
+            // 本兜底实际只可靠覆盖 addView(View)/addView(View,int) 两种形态,
+            // (View,int,LayoutParams) 一项对"ViewGroup 自身委托链"路径仍有效, 保留兜底
             arrayOf(
                 View::class.java, Int::class.javaPrimitiveType,
                 ViewGroup.LayoutParams::class.java

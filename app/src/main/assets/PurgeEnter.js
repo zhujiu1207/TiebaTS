@@ -1,6 +1,16 @@
             (function(){
-              if(window.__tsPurgeEnter){return true;}
-              window.__tsPurgeEnter=true;
+              // 短路范围收窄(2026-11-24 真机排查): 标记只短路 observer/心跳注册,
+              // 动作扫描每轮无条件执行。此前 IIFE 整体短路时, 真机上首注入回调
+              // 即返回 true(=页面已带标记), 若标记所在 window 与真正渲染进吧内容
+              // 的文档存在分离(宿主重载文档/双文档路径), 后续注入永远短路,
+              // 内容文档永无净化——模拟器正常而真机失效的差异正落在此处。
+              // scan()/run() 自身幂等(改写覆盖式赋值+display:none), 重复执行无害
+              if(!window.__tsPurgeEnter){
+                window.__tsPurgeEnter=true;
+                __tsPurgeRegisterObserver();
+              }
+              __tsPurgeRun();
+              return true;
               function dtext(el){
                 var cn=el.childNodes;var own='';
                 for(var j=0;j<cn.length;j++){if(cn[j].nodeType===3){own+=cn[j].textContent;}}
@@ -184,28 +194,35 @@
                   window.__tsN0=null;
                 }
               }
+              // 挂到 window 上供后续每次注入直接驱动一轮扫描(见文件头短路收窄注释)
+              window.__tsPurgeRun=run;
+              function __tsPurgeRun(){
+                try{run();}catch(e){}
+              }
               // 防抖: observer 回调只记时间戳, 150ms 尾沿后统一跑一轮 run。
               // 此前每次 DOM 变动立即 run()(最多4轮全树扫描), 而本脚本自己的
               // 改写(签名按钮 textContent)又会触发 childList observer 回环,
               // 变动风暴下全树扫描被放大数倍。尾部防抖收敛为每 150ms 至多一轮;
               // 心跳与防抖走同一调度入口, 不再并行两套触发
-              var pending=false;
-              function scheduleRun(){
-                if(pending)return;
-                pending=true;
-                setTimeout(function(){
-                  pending=false;
-                  run();
-                },150);
+              function __tsPurgeRegisterObserver(){
+                var pending=false;
+                function scheduleRun(){
+                  if(pending)return;
+                  pending=true;
+                  setTimeout(function(){
+                    pending=false;
+                    run();
+                  },150);
+                }
+                scheduleRun();
+                var lastMutation=Date.now();
+                var mo=new MutationObserver(function(){lastMutation=Date.now();scheduleRun();});
+                mo.observe(document.documentElement,{childList:true,subtree:true});
+                // 心跳兜底: 页面稳定后无DOM变动, 靠定时器驱动屏蔽判定。
+                // 仅在近期无DOM变动(变动已由observer即时处理)时以1s节奏兜底,
+                // 避免固定200ms心跳对稳定页面做每秒5轮的全树扫描
+                setInterval(function(){
+                  if(Date.now()-lastMutation>=1500){scheduleRun();}
+                },1000);
               }
-              scheduleRun();
-              var lastMutation=Date.now();
-              var mo=new MutationObserver(function(){lastMutation=Date.now();scheduleRun();});
-              mo.observe(document.documentElement,{childList:true,subtree:true});
-              // 心跳兜底: 页面稳定后无DOM变动, 靠定时器驱动屏蔽判定。
-              // 仅在近期无DOM变动(变动已由observer即时处理)时以1s节奏兜底,
-              // 避免固定200ms心跳对稳定页面做每秒5轮的全树扫描
-              setInterval(function(){
-                if(Date.now()-lastMutation>=1500){scheduleRun();}
-              },1000);
             })();

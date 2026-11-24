@@ -45,6 +45,9 @@ fun toByteBuffer(inputStream: InputStream, maxBytes: Int): ByteBuffer {
 
 fun getExtension(bb: ByteBuffer): String {
     // 相对读取, 不依赖 bb.array(): direct/只读缓冲的 array() 会抛异常。
+    // 读取后 rewind 把 position 归零(调用方 SaveImages 依赖"此后从 0 起读"的契约,
+    // 并非恢复原 position——传 position≠0 的 slice 缓冲时后续读取会错位重读,
+    // 调用前需自行保证 position 从 0 开始)。
     // WebP 头 12 字节("RIFF"+长度+"WEBP"), 不足 12 字节时按实际可读字节取头部
     val len = minOf(12, bb.remaining())
     val chunk = ByteArray(len).also {

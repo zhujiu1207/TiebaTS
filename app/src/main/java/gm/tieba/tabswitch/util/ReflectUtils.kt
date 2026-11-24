@@ -25,21 +25,20 @@ fun getColor(fieldName: String): Int {
 }
 
 fun getDimen(fieldName: String): Float {
+    // 常量直返表仅收录有调用方的键(2026-11-21 审查清理: ds10/ds140 无引用已删);
+    // 其余键走宿主资源表真实值
     when (fieldName) {
-        "ds10" -> return dipToPx(XposedContext.getContext(), 5f).toFloat()
         "ds20" -> return dipToPx(XposedContext.getContext(), 10f).toFloat()
         "ds30" -> return dipToPx(XposedContext.getContext(), 15f).toFloat()
         "ds32" -> return dipToPx(XposedContext.getContext(), 16f).toFloat()
-        "ds140" -> return dipToPx(XposedContext.getContext(), 70f).toFloat()
     }
     return XposedContext.getContext().resources.getDimension(getR("dimen", fieldName))
 }
 
 fun getDimenDip(fieldName: String): Float {
+    // 同上: 仅 fontsize22 有调用方(TSPreferenceHelper), 28/36 死分支已删
     when (fieldName) {
         "fontsize22" -> return 11f
-        "fontsize28" -> return 14f
-        "fontsize36" -> return 18f
     }
     return pxToDip(XposedContext.getContext(), getDimen(fieldName)).toFloat()
 }

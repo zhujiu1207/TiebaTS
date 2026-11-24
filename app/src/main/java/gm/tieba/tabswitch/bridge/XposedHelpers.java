@@ -32,9 +32,9 @@ public final class XposedHelpers {
     private XposedHelpers() {
     }
 
-    /** 字段查找缓存：key = 类名 + '#' + 字段名。 */
+    /** 字段查找缓存：key = 类名 + '@' + ClassLoader身份 + '#' + 字段名。 */
     private static final ConcurrentHashMap<String, Field> sFieldCache = new ConcurrentHashMap<>();
-    /** 方法查找缓存：key = 类名 + '#' + 方法名 + 参数签名。 */
+    /** 方法查找缓存：key = 类名 + '@' + ClassLoader身份 + '#' + 方法名 + 参数签名。 */
     private static final ConcurrentHashMap<String, Method> sMethodCache = new ConcurrentHashMap<>();
 
     // 宽松匹配缓存: 值为 Method(命中)或 LENIENT_MISS 哨兵(未命中负缓存)。
@@ -66,7 +66,10 @@ public final class XposedHelpers {
 
     /** 旧版 {@code findField}：沿继承链查找字段，找不到抛 {@link NoSuchFieldError}。 */
     public static Field findField(Class<?> clazz, String fieldName) {
-        String key = clazz.getName() + '#' + fieldName;
+        // 键含 ClassLoader 身份维度(与 lenientKey 同口径): 宿主插件化场景下
+        // 不同加载器可能加载同二进制名的类且字段集不同, 仅按类名入键会串缓存
+        String key = clazz.getName() + '@' + System.identityHashCode(clazz.getClassLoader())
+                + '#' + fieldName;
         Field cached = sFieldCache.get(key);
         if (cached != null) return cached;
         Class<?> current = clazz;
@@ -185,7 +188,9 @@ public final class XposedHelpers {
      */
     public static Method findMethodExact(Class<?> clazz, String methodName, Object... parameterTypes) {
         Class<?>[] resolved = resolveParameterTypes(parameterTypes, clazz.getClassLoader());
-        String key = clazz.getName() + '#' + methodName + '#' + Arrays.toString(resolved);
+        // 键含 ClassLoader 身份维度, 口径与 findField/lenientKey 一致
+        String key = clazz.getName() + '@' + System.identityHashCode(clazz.getClassLoader())
+                + '#' + methodName + '#' + Arrays.toString(resolved);
         Method cached = sMethodCache.get(key);
         if (cached != null) return cached;
         Class<?> current = clazz;
@@ -241,6 +246,10 @@ public final class XposedHelpers {
     }
 
     public static Object callMethod(Object obj, String methodName, Object... args) {
+        // null receiver 静默返回 null 是与旧版的刻意差异(旧版抛 NPE): hooker 侧
+        // 大量调用点依赖"宿主对象为 null 时整段调用静默降级"的行为(如页面销毁
+        // 窗口期), 抛 NPE 会让这些调用点逐一改造判空。副作用不发生也不留痕,
+        // 排查"callMethod 没生效"时先查 receiver 是否为 null
         if (obj == null) return null;
         Method method = resolveMethod(obj.getClass(), methodName, args);
         try {
@@ -265,7 +274,10 @@ public final class XposedHelpers {
 
     /**
      * 按实参类型解析方法：先按精确参数类型找，再按"可赋值"匹配。
-     * 旧版用同一策略，业务代码依赖它对装箱/子类实参的宽容度。
+     * 宽松分支按 getDeclaredMethods() 声明序取<b>首个</b>形参可赋值的方法
+     * （非旧版 findMethodBestMatch 的最优匹配打分）：存在同名重载时解析结果
+     * 可能与旧版不同，宿主版本更新改变声明顺序后行为可能翻转——业务代码
+     * 依赖的是它对装箱/子类实参的宽容度，不是匹配优先级。
      */
     private static Method resolveMethod(Class<?> clazz, String methodName, Object[] args) {
         int argc = args == null ? 0 : args.length;

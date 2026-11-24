@@ -1,45 +1,17 @@
 package gm.tieba.tabswitch.dao
 
-import androidx.room.ColumnInfo
-import androidx.room.Dao
-import androidx.room.Database
-import androidx.room.Entity
-import androidx.room.Insert
-import androidx.room.PrimaryKey
-import androidx.room.Query
-import androidx.room.RoomDatabase
-
-@Entity
+// 反混淆规则库实体。历史上是 Room @Entity, 现为纯 data class: 规则库只有一张
+// 单表, 为它拖进 room-runtime/androidx.sqlite/flatbuffers 整链(字节码 ~50KB,
+// 占 dex 12%)不划算, 已改为 framework SQLiteOpenHelper 手写实现(见 AcRules)。
+// 字段语义: matcher=特征描述符(toString 形态), class/method=反混淆定位结果
 data class AcRule(
-    @PrimaryKey(autoGenerate = true) val id: Int,
-    @ColumnInfo(name = "matcher") val matcher: String,
-    @ColumnInfo(name = "class") val clazz: String,
-    @ColumnInfo(name = "method") val method: String
+    val id: Int,
+    val matcher: String,
+    val clazz: String,
+    val method: String
 ) {
     companion object {
         fun create(matcher: String, clazz: String, method: String) =
             AcRule(0, matcher, clazz, method)
     }
-}
-
-@Dao
-interface AcRuleDao {
-    @Query("SELECT COUNT(*) FROM AcRule")
-    fun count(): Int
-
-    @Query("SELECT * FROM AcRule WHERE matcher IN (:matchers)")
-    fun loadAllMatch(vararg matchers: String): List<AcRule>
-
-    @Insert
-    fun insertAll(vararg rules: AcRule)
-
-    // 单条语句自带事务语义: 逐行 delete 中途失败会留下半清空状态,
-    // 后续完整性校验按"库不完整"误判并触发不必要的全量重建
-    @Query("DELETE FROM AcRule")
-    fun deleteAll()
-}
-
-@Database(entities = [AcRule::class], version = 1, exportSchema = false)
-abstract class AcRuleDatabase : RoomDatabase() {
-    abstract fun acRuleDao(): AcRuleDao
 }

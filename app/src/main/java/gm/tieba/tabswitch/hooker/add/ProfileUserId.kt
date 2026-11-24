@@ -114,14 +114,18 @@ class ProfileUserId : XposedContext(), IHooker {
         }
         if (alreadyProbed) return
         if (tbWebView == null) return
-        // WebView 加载是异步的, 分几次延迟探测, 命中即停
+        // WebView 加载是异步的, 分几次延迟探测。WebView 引用必须在每轮回调内现取:
+        // 此前在循环体外一次性解析, 首轮为 null(内核尚未挂载)即 return,
+        // 其余延迟轮次全部丢失, 慢网下整轮探测失效。
+        // 各轮独立执行不因命中提前终止: handleProbeResult/按钮挂载幂等,
+        // 重复探测只多付一次 DOM 文本读取, 4 轮耗尽自然停止
         for (delay in longArrayOf(1500L, 3500L, 6000L, 9000L)) {
-            val webView = runCatching { innerGetter.invoke(tbWebView) as? android.webkit.WebView }
-                .getOrNull() ?: return
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 runCatching {
                     // 页面可能已切换: 仍要求当前 Activity 处于前台
                     if (getCurrentActivity() !== activity) return@runCatching
+                    val webView = runCatching { innerGetter.invoke(tbWebView) as? android.webkit.WebView }
+                        .getOrNull() ?: return@runCatching
                     webView.evaluateJavascript(JS_PROBE) { json ->
                         handleProbeResult(activity, json)
                     }

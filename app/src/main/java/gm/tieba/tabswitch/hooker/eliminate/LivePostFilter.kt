@@ -8,8 +8,8 @@ import java.lang.reflect.Field
 // 直播贴无独立模板卡, 判定依据是合成卡载荷内 feed_head 的稳定类名
 // com.baidu.tieba.feed.component.uistate.CardHeadUiState, feed_head 参数
 // 存于该类 Map 字段(businessInfoMap)内, recom_type == "3", 命中则整帖移除。
-// 列表入口为 FeedTemplateAdapter L/P/R + TemplateAdapter.setList(未挂
-// HomeTemplateAdapter g0/j0 兜底, 与 HotPostFilter 的双兜底入口不同),
+// 列表入口统一走 FeedListPipeline(单 hook 多阶段链, 收编后覆盖 FeedTemplateAdapter
+// L/P/R + TemplateAdapter.setList + HomeTemplateAdapter g0/j0 全部入口),
 // 载荷取模板卡数据项接口(22.12=nt9/fs9, 22.13=eu9)的 d()。
 class LivePostFilter : XposedContext(), IHooker {
 

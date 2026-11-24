@@ -160,6 +160,25 @@ class FragmentTab : XposedContext(), IHooker, Obfuscated {
                 mSlotAnchorIndex = tabList?.count { tab ->
                     tab != null && tab.javaClass.name in preSlotClasses
                 }
+
+                // 隐藏首页后的选中态补设: 宿主 D() 是底栏 Tab 初始选中态的唯一来源,
+                // 且只给 type==2(首页)的 indicator 调 setTabSelected(true)+setStateImage(true)
+                // 并登记到控制器 s 字段(四版本一致: 22.14 bcf.java:1466 / 22.13 u9f:1466 /
+                // 22.12 m7f:1466 / 22.11 m2f:1424)。首页被移除后没有任何存活 Tab 获得
+                // indicator 级选中态——View 级 selected 仍会经 setCurrentTabByType 的
+                // "找不到 type==2 且 d==-1 → u(0,false)" 兜底落到首个 Tab(进吧)上, 但
+                // D() 那套视觉高亮(setTabSelected/setStateImage/s 引用)悬空, 表现为
+                // 启动后进吧无高亮、首次点击不亮, 要先点其它 Tab 再点回来才恢复。
+                // 补设对齐宿主 D() 对 type==2 的完整行为: 对进吧 indicator 调同两个
+                // 方法 + 把 s 引用补上(b0(int) 里 `i2!=2 时 s.g(false)` 会消费 s, 不补
+                // 的话首次切 Tab NPE 隐患)。仅当本次列表确实移除了首页才补, 与
+                // removeIf 同帧执行(L() → D() 同步链), 无时序竞争
+                mPendingHomeSelectedFix = getBoolean("home_recommend") &&
+                    tabsToRemove.contains(
+                        "com.baidu.tieba.homepage.framework.RecommendFrsDelegateStatic"
+                    ) && tabList?.none { tab ->
+                        tab?.javaClass?.name == "com.baidu.tieba.homepage.framework.RecommendFrsDelegateStatic"
+                    } == true
                 }
 
                 // 22.12 起底部中央发帖"+"回归: 由该控制器的 z() 独立创建可点击槽位
@@ -225,6 +244,215 @@ class FragmentTab : XposedContext(), IHooker, Obfuscated {
                             logBoth("FragmentTab: 底栏发帖中央按钮字段形态漂移, 跳过视图隐藏")
                         }
                     }.onFailure { logBoth("FragmentTab: 底栏发帖+短路注册失败 -- $it") }
+                }
+
+                // 隐藏首页后的选中态补设(消费 mPendingHomeSelectedFix): hook D() after,
+                // 每次 D() 执行完(即一个 Tab 的 indicator 已初始化)时, 若本次底栏重建
+                // 移除了首页且该 Tab 是首个存活 Tab(原生序进吧 type==1; 首页+进吧同隐时
+                // 为消息 type==3——凡"首个存活的 D()"都缺选中态, 不限于进吧), 按宿主
+                // D() 对 type==2 的行为补 setTabSelected(true)+setStateImage(true)+s 引用。
+                // s 字段名四版本一致(22.11 m2f:121-122 缺 s——s 是 22.12 引入, 22.11 的
+                // type==2 分支只设 r; 补设 s 前按字段存在性判定, 无 s 的版本跳过引用登记)。
+                // setTabSelected/setStateImage 在 jadx 里因 Titan 拦截层呈现空方法体,
+                // 真实逻辑在 dex 层(实机 dump 证实其效果: 原生首页 selected=true 且高亮),
+                // 反射调用走运行时真实实现, 与宿主行为完全一致
+                runCatching {
+                    val controllerClass = XposedHelpers.findClass(clazz, sClassLoader)
+                    hookAfterMethod(controllerClass, "D",
+                        findClass("com.baidu.tbadk.mainTab.FragmentDelegate"),
+                        findClass("com.baidu.tbadk.mainTab.FragmentTabStructure"),
+                        findClass("com.baidu.tbadk.mainTab.TbFragmentTabIndicator")
+                    ) { param ->
+                        if (!mPendingHomeSelectedFix) {
+                            return@hookAfterMethod
+                        }
+                        // 首个存活的 D() 即首个存活 Tab: mPendingHomeSelectedFix 在 L()
+                        // 的 removeIf 后置位, D() 全部由 L() 循环逐个调用, 第一次带标记
+                        // 进入本回调的就是存活列表首项——不按 type 白名单, 覆盖
+                        // 首页+进吧同隐(首个变消息)等组合
+                        mPendingHomeSelectedFix = false
+                        val tbIndicator = param.args[2] as? android.view.View
+                            ?: return@hookAfterMethod
+                        runCatching {
+                            XposedHelpers.callMethod(tbIndicator, "setTabSelected", true)
+                            XposedHelpers.callMethod(tbIndicator, "setStateImage", true)
+                            // 登记控制器 s 引用(22.12+ 存在该字段): b0(int) 非 2 切换时
+                            // 消费 s.g(false), 不登记会在后续切 Tab 时 NPE 隐患
+                            val sField = runCatching {
+                                controllerClass.getField("s")
+                            }.getOrNull()
+                            if (sField != null && sField.type.name == "com.baidu.tbadk.mainTab.MainTabCommonIndicator") {
+                                sField.set(param.thisObject, tbIndicator)
+                            }
+                        }.onFailure {
+                            logBoth("FragmentTab: 进吧选中态补设失败 -- ${it.javaClass.simpleName}")
+                        }
+                    }
+                }.onFailure {
+                    logBoth("FragmentTab: 进吧选中态补设注册失败 -- $it")
+                }
+
+                // 隐藏首页后 IM/IMSDK 启动链前置(两个问题同一根因):
+                //
+                // 问题 A(聊天会话/通知空): IM 内存库总链 = ci6.a() 空闲任务批量 loadClass
+                // 加载静态类数组(ci6.java:97, 含 LaunchStatic 与全部底栏 delegate) →
+                // LaunchStatic 静态块(LaunchStatic.java:227-248) → ImTmpBridge$Others
+                // .e() 注册 2005016 监听器(gtb.a, gtb.java:138-143)/.d() 创建
+                // ImMemoryCacheRegister 单例(注册 2005018 等监听器) → InitAccountTask
+                // 派发 2005016 → gtb 后台任务完成派发 2005018(gtb.java:90) → 内存库
+                // fob.q().y() + 通知模型 sq6.M().S()。false 态下首页 delegate 与
+                // LaunchStatic 同数组先被加载, 2005016 派发时监听器已就位; 隐藏首页后
+                // 数组加载时序后移, 2005016(登录期派发, 仅一次)被错过 → 2005018 永不
+                // 派发 → 聊天会话空/通知计数空/左侧栏聊天图标 drawable 不渲染。
+                // 问题 B(IMSDK 登录推迟): AlaLiveSdkStatic.p() → ifc.b("0") →
+                // LiveIMManager.init + loginToIM, 正常触发方为消息页懒加载(实测 true 态
+                // init 推迟到点击时刻), 提前到启动期避免首次进消息页空态。
+                //
+                // 修复 = L() after 每进程一次, 主线程触发两件事:
+                // 1) Class.forName("com.baidu.tbadk.core.LaunchStatic")——静态块是宿主
+                //    原路代码, 加载即执行 e()/f()/d() 全链, 零重实现; 2005016 错过也无妨,
+                //    监听器就位后 gtb 的 b 回调(2005018 派发)在下一次账号事件仍会触发,
+                //    且 ImMemoryCacheRegister 构造后 o() 注册的监听器会收到后续派发。
+                //    (时序依据: L() 发生在 MainTabActivity 构建底栏时, 晚于 InitAccountTask
+                //    派发 2005016 的情形下此路是唯一补救; 若早于, 静态块幂等无副作用)
+                // 2) 反射 AlaLiveSdkStatic.p()——public static void, 自带幂等标志与主
+                //    进程判断(四版本签名一致: 2211-2214 均 AlaLiveSdkStatic.java:1864,
+                //    22.11 体内为 xbc/ifc 轮换前的等价类)
+                if (getBoolean("home_recommend")) {
+                    runCatching {
+                        hookAfterMethod(method) { _ ->
+                            if (sImsdkKicked) {
+                                return@hookAfterMethod
+                            }
+                            sImsdkKicked = true
+                            val pMethod = runCatching {
+                                findClass("com.baidu.tieba.livesdk.AlaLiveSdkStatic")
+                                    .declaredMethods.firstOrNull { m ->
+                                        m.name == "p" && m.parameterTypes.isEmpty() &&
+                                            m.returnType == Void.TYPE
+                                    }
+                            }.getOrNull()
+                            if (pMethod == null) {
+                                logBoth("FragmentTab: AlaLiveSdkStatic.p() 未定位, IMSDK 前置初始化放弃")
+                            }
+                            // 异步触发: 静态块含广播注册/监听器注册, IMSDK 初始化含网络
+                            // 登录, 均不嵌在 L() 同步链上
+                            runOnUiThread {
+                                // 1) IM 内存库/通知模型链: 加载 LaunchStatic 触发静态块
+                                //    (注册 2005016 监听器 + ImMemoryCacheRegister 单例)
+                                runCatching {
+                                    Class.forName(
+                                        "com.baidu.tbadk.core.LaunchStatic",
+                                        true,
+                                        sClassLoader
+                                    )
+                                    logBoth("FragmentTab: LaunchStatic 已加载(IM 内存库链触发)")
+                                }.onFailure {
+                                    logBoth("FragmentTab: LaunchStatic 加载失败 -- ${it.javaClass.simpleName}")
+                                }
+                                // 2) IMSDK 登录链先行: fob.q().y() 发 2016008 请求会话 DB,
+                                //    依赖 IMSDK 登录就绪, 必须先于 2005018 补派发
+                                if (pMethod != null) {
+                                    runCatching {
+                                        pMethod.invoke(null)
+                                    }.onFailure {
+                                        logBoth("FragmentTab: IMSDK 前置初始化失败 -- ${it.javaClass.simpleName}")
+                                    }
+                                }
+                                // 3) 补派发 2005018(账号变更完成), 延迟 8s 等登录态就绪:
+                                //    LaunchStatic 注册的 2005016 监听器错过了登录期那次
+                                //    派发(时序竞争), gtb 的 2005018 派发不会再有第二次——
+                                //    payload 为 null 与宿主原生派发完全一致(gtb.java:90
+                                //    `new CustomResponsedMessage(2005018, null)`), 监听器
+                                //    (ImMemoryCacheRegister.u)只判 cmd 不读 payload, 触发
+                                //    fob.q().y()(发 2016008 网络请求拉会话, 响应经 n() 组装
+                                //    内存库) + sq6.M().S()(通知模型注册)。
+                                //    幂等性: 监听器链各步均为重置+重载语义, 重复派发无害。
+                                //    注意 2016008 是网络请求, 依赖登录态(BDUSS)就绪, 固定
+                                //    延迟只覆盖大多数场景; 打开聊天页时的精准兜底见下方
+                                //    g0() hook(登录态此时必然就绪)
+                                android.os.Handler(android.os.Looper.getMainLooper())
+                                    .postDelayed({
+                                        runCatching {
+                                            val messageManager = XposedHelpers.callStaticMethod(
+                                                findClass("com.baidu.adp.framework.MessageManager"),
+                                                "getInstance"
+                                            )
+                                            val message = XposedHelpers.newInstance(
+                                                findClass(
+                                                    "com.baidu.adp.framework.message.CustomResponsedMessage"
+                                                ),
+                                                2005018
+                                            )
+                                            XposedHelpers.callMethod(
+                                                messageManager, "dispatchResponsedMessage", message
+                                            )
+                                            logBoth("FragmentTab: 2005018 补派发完成")
+                                        }.onFailure {
+                                            logBoth("FragmentTab: 2005018 补派发失败 -- ${it.javaClass.simpleName}")
+                                        }
+                                    }, 8000L)
+                            }
+                        }
+                    }.onFailure {
+                        logBoth("FragmentTab: IM 启动链前置初始化注册失败 -- $it")
+                    }
+
+                    // 打开聊天页时的精准兜底: MsgChatCenterSliceView.g0() 是聊天页拉会话
+                    // 的唯一入口(sendMessage(new RequestMemoryListMessage(1))), 请求经
+                    // ImMemoryCacheRegister 的 d 任务(2016007)从内存管理类(22.14=fob)
+                    // 的内存列表取数——若启动期的 2005018 补派发时机不佳(登录态未就绪,
+                    // 2016008 网络请求静默失败), 内存库为空则列表恒空。此处在该入口前
+                    // 检查 z()(内存库加载完成标志), 未加载则先补调 q().y()(发起 2016008
+                    // 网络拉取), 完成后 g0() 原逻辑发的请求自然拿到数据; 若响应尚未返回
+                    // 本次仍可能空, 用户下拉刷新可重拉。y() 自身幂等(a 标志重置+重新
+                    // 请求), 重复调用无害。
+                    // 内存管理类名随版本轮换(22.11=glb/22.12=rmb/22.13=nmb/22.14=fob,
+                    // 四版本方法形态逐字一致: static q() + boolean z() + void y()),
+                    // 按列表顺序取首个存在的类, 全部漂移时静默放弃(fail-open 无害:
+                    // 最坏回退到宿主原生行为=首进聊天页可能空态, 下拉刷新可恢复)。
+                    // g0 为混淆名, 按形状定位: 无参 void + 体内含 RequestMemoryListMessage
+                    // 构造(字符串不可查, 用"仅有一个无参 void 方法且类名精确匹配"约束;
+                    // 四版本 g0() 均在且同名, 形状稳定)
+                    runCatching {
+                        val chatViewClass = findClass(
+                            "com.baidu.tieba.immessagecenter.msgtab.ui.view.MsgChatCenterSliceView"
+                        )
+                        val g0Method = chatViewClass.declaredMethods.firstOrNull { m ->
+                            m.name == "g0" && m.parameterTypes.isEmpty() &&
+                                m.returnType == Void.TYPE
+                        }
+                        if (g0Method == null) {
+                            logBoth("FragmentTab: MsgChatCenterSliceView.g0() 未定位, 聊天页兜底放弃")
+                        } else {
+                            hookBeforeMethod(g0Method) { _ ->
+                                runCatching {
+                                    val memoryClass = listOf(
+                                        "com.baidu.tieba.fob", "com.baidu.tieba.nmb",
+                                        "com.baidu.tieba.rmb", "com.baidu.tieba.glb"
+                                    ).firstOrNull { name ->
+                                        runCatching {
+                                            findClass(name)
+                                            true
+                                        }.getOrDefault(false)
+                                    } ?: return@hookBeforeMethod
+                                    val singleton = XposedHelpers.callStaticMethod(
+                                        findClass(memoryClass), "q"
+                                    )
+                                    val loaded = XposedHelpers.callMethod(singleton, "z") as? Boolean
+                                        ?: true
+                                    if (!loaded) {
+                                        XposedHelpers.callMethod(singleton, "y")
+                                        logBoth("FragmentTab: 聊天页兜底触发(内存库未加载, $memoryClass.y)")
+                                    }
+                                }.onFailure {
+                                    logBoth("FragmentTab: 聊天页兜底失败 -- ${it.javaClass.simpleName}")
+                                }
+                            }
+                        }
+                    }.onFailure {
+                        logBoth("FragmentTab: 聊天页兜底注册失败 -- $it")
+                    }
                 }
 
                 // 中央发帖槽位纠位: 宿主 z() 把槽位固定插在 child index 2
@@ -347,6 +575,16 @@ class FragmentTab : XposedContext(), IHooker, Obfuscated {
     // g() 纠位时消费; null=未知(尚未经历 L() 或列表形态异常), 纠位退回按数量取中位。
     // 采集与消费同在主线程(L() → z() → g() 同步调用链), 无并发问题
     private var mSlotAnchorIndex: Int? = null
+
+    // 隐藏首页后的选中态补设标记: L() 回调里在 removeIf 后置位(本次重建确实移除了
+    // 首页), D() after 回调里消费——首个存活 Tab 的 indicator 初始化完成时按宿主
+    // type==2 分支补选中态并复位。置位与消费同在主线程(L() 与 D() 同步调用链),
+    // 且底栏重建时 L() 先于全部 D(), 不会出现跨轮次错配
+    private var mPendingHomeSelectedFix = false
+
+    // IMSDK 前置初始化的一次性标记(进程级): L() 每次底栏重建都执行, 只在第一次触发
+    // p(); p() 自身幂等, 双保险防重复 post
+    private var sImsdkKicked = false
 
     // 悬浮蓝"+"视图字段对(h=TBLottieAnimationView 静态图/i=TbImageView 动态图标)的
     // 反射解析缓存: 三版本控制器字段名一致(22.11=m2f/22.12=m7f/22.13=u9f 均为

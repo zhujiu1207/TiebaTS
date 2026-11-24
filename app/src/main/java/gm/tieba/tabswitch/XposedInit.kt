@@ -40,7 +40,6 @@ import gm.tieba.tabswitch.hooker.auto.MsgCenterTab
 import gm.tieba.tabswitch.hooker.auto.NotificationDetect
 import gm.tieba.tabswitch.hooker.auto.OneKeyLottery
 import gm.tieba.tabswitch.hooker.auto.OriginSrc
-import gm.tieba.tabswitch.hooker.auto.TransitionAnimation
 import gm.tieba.tabswitch.hooker.deobfuscation.DeobfuscationHelper
 import gm.tieba.tabswitch.hooker.deobfuscation.DeobfuscationHelper.currentModuleId
 import gm.tieba.tabswitch.hooker.deobfuscation.DeobfuscationHelper.getDeobfsModuleId
@@ -55,6 +54,7 @@ import gm.tieba.tabswitch.hooker.eliminate.ContentFilter
 import gm.tieba.tabswitch.hooker.eliminate.CommentToolbar
 import gm.tieba.tabswitch.hooker.eliminate.FoldTopCardView
 import gm.tieba.tabswitch.hooker.eliminate.FollowFilter
+import gm.tieba.tabswitch.hooker.eliminate.HideAiCard
 import gm.tieba.tabswitch.hooker.eliminate.HideSignPopup
 import gm.tieba.tabswitch.hooker.eliminate.FragmentTab
 import gm.tieba.tabswitch.hooker.eliminate.FrsPageFilter
@@ -147,7 +147,11 @@ class XposedInit : XposedContext() {
             try {
                 // 同步落盘: 进程即将退出, 异步队列来不及写会丢崩溃日志
                 Logger.logSync("===== 未捕获异常闪退 =====")
-                Logger.logSync("thread=${thread.name}(id=${thread.id})")
+                // @Suppress("DEPRECATION"): Thread.getId() 仅编译期 JDK 19+ 标注 deprecated,
+                // 运行环境 Android(API 28) 全版本可用且无替代 API(threadId 为 JVM 19+)
+                @Suppress("DEPRECATION")
+                val threadId = thread.id
+                Logger.logSync("thread=${thread.name}(id=$threadId)")
                 Logger.logSync(throwable)
             } catch (ignored: Throwable) {
             }
@@ -224,8 +228,9 @@ class XposedInit : XposedContext() {
      * 偏好迁移: 旧版本遗留键/合并开关向现行结构收敛。每段迁移天然幂等——
      * 旧键移除后下一次启动快照中不再出现, 条件不成立即空转。
      *
-     * <p>调用方传入 Preferences.init 之后的快照副本(getAll 每次返回副本), 迁移
-     * 判定一律以快照为准, 不在段间重复拉取, 避免半程写入影响后续判定。
+     * <p>调用方传入 Preferences.init 之后的快照副本(getAll 每次返回副本):
+     * 键存在性判定以快照为准(半程写入不影响本段判定), 开关值读取走 getBoolean
+     * 实时读(与快照同库, 语义一致)。
      */
     private fun applyPreferenceMigrations(allPrefs: Map<String, *>) {
         // 迁移: 4.4.1 将"精简首页顶栏"拆分为隐藏游戏手柄/隐藏侧边栏,
@@ -274,6 +279,16 @@ class XposedInit : XposedContext() {
         if (allPrefs.containsKey("hide")) {
             remove("hide")
             Logger.log("migrated 清理已移除的 hide(隐藏模块)键")
+        }
+
+        // 迁移: "过场动画"(transition_animation)hooker 已移除(2026-11-21 审查:
+        // 22.11 设置页重写起 UI 即无此开关, 键全项目无写入点, hooker 对新装用户
+        // 不可达; 老用户残留键使其以"幽灵态"激活且无 UI 可关闭)。清键 + 摘除登记。
+        // 该 hooker 的效果本就是把宿主自己的过场常量原样回放(等效宿主默认行为),
+        // 摘除后幽灵用户仅回到宿主原生过场, 无可感知行为差
+        if (allPrefs.containsKey("transition_animation")) {
+            remove("transition_animation")
+            Logger.log("migrated 清理已移除的 transition_animation(过场动画)键")
         }
     }
 
@@ -439,6 +454,7 @@ class XposedInit : XposedContext() {
                 ::RedTip,
                 ::FollowFilter,
                 ::HideSignPopup,
+                ::HideAiCard,
                 ::ContentFilter,
                 { CommentToolbar },
                 ::FrsPageFilter,
@@ -469,7 +485,6 @@ class XposedInit : XposedContext() {
                 ::ProfileUserId,
                 ::UserFilter,
                 ::SubPbLatestSort,
-                ::TransitionAnimation,
                 ::AutoRefresh,
                 ::LowSpecMode
             )

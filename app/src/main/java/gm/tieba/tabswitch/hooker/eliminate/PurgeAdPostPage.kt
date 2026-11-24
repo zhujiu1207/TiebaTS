@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 // 帖子页列表广告 + 帖子页广告网络请求层。从 PurgeAd 原文搬移（逐字保留注释）。
 // isPostAdItem 判定的两块缓存（首楼推荐类/getType 方法）随本对象走，
-// 判定入口由主文件注入（isFirstFloorData/resolveGetType 查询本对象缓存）。
+// 判定入口为本对象的 filterPostAdList（FeedListPipeline 与列表入口均经它进入）。
 internal object PurgeAdPostPage {
 
     // TypeAdapter/RecyclerViewTypeAdapter 的数据入口: 唯一的 void(List) 实例方法
@@ -48,7 +48,7 @@ internal object PurgeAdPostPage {
         }
     }
 
-    internal fun isPostAdItem(item: Any, uniqueIdClass: Class<*>, blockedTypes: Set<Any>): Boolean {
+    private fun isPostAdItem(item: Any, uniqueIdClass: Class<*>, blockedTypes: Set<Any>): Boolean {
         // 首楼推荐数据直接拦截(注册后类引用不变, 按结果缓存 findClass:
         // 此前每元素一次 Class.forName, 帖子页高频路径放大反射开销)
         if (firstFloorDataClass === UNRESOLVED_SENTINEL) {

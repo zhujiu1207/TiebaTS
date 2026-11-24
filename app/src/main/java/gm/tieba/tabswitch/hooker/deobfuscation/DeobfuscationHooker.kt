@@ -633,7 +633,6 @@ class DeobfuscationHooker(private val mMatchers: List<Matcher>) : XposedContext(
     private class PanelColors(light: Boolean) {
         val card = if (light) 0xFFFFFFFF.toInt() else 0xFF1E1F22.toInt()
         val title = if (light) 0xDE000000.toInt() else 0xDEFFFFFF.toInt()
-        val text = if (light) 0x8A000000.toInt() else 0xB3FFFFFF.toInt()
         val secondary = if (light) 0xFF7A7A7A.toInt() else 0xFF9E9E9E.toInt()
         val track = if (light) 0x14000000.toInt() else 0x1FFFFFFF.toInt()
         val accent = 0xFF3388FF.toInt()

@@ -177,12 +177,12 @@ class LowSpecMode : XposedContext(), IHooker {
     }
 
     private fun weakenAnimation() {
-        // 页面过场: 与 auto/TransitionAnimation hook 同两个方法。该 hooker 以
-        // XC_MethodReplacement 挂钩, 同方法上先行回调短路后(returnEarly)后续回调
-        // 不再执行, 故这里必须以 PRIORITY_HIGHEST 的 before 钩子先行:
-        // 开启时改参为 (0,0) 并短路, 双开时覆盖其自定义过场; 关闭时不触碰参数,
-        // TransitionAnimation 行为完全不受影响, 无需代码互斥。
-        // 不沿用 TransitionAnimation 的版本门槛, overridePendingTransition(0,0) 全版本可用
+        // 页面过场: hook ActivityPendingTransitionFactory 的两个动画方法。
+        // 以 PRIORITY_HIGHEST 的 before 钩子先行(历史上另有"过场动画"hooker 以
+        // replace 挂同两方法, 高优先级保证在其前生效; 该 hooker 已随审查移除,
+        // 优先级保留无害), 开启时改参为 (0,0) 并短路; 关闭时不触碰参数,
+        // 宿主原生过场完全不受影响。
+        // overridePendingTransition(0,0) 全版本可用, 不设版本门槛
         val factory = findClass("com.baidu.tbadk.ActivityPendingTransitionFactory")
         listOf("enterExitAnimation", "closeAnimation").forEach { name ->
             val transitionMethod = XposedHelpers.findMethodExactIfExists(

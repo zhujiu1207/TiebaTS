@@ -5,7 +5,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.os.Parcelable
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import gm.tieba.tabswitch.bridge.XC_MethodHook
@@ -28,7 +27,6 @@ import gm.tieba.tabswitch.util.getObjectField
 import gm.tieba.tabswitch.util.Logger
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.Serializable
 import java.lang.reflect.Modifier
 
 class Purge : XposedContext(), IHooker, Obfuscated {
@@ -456,14 +454,19 @@ class Purge : XposedContext(), IHooker, Obfuscated {
                 XposedHelpers.setObjectField(param.thisObject, "frs_bottom", null)
 
                 // 吧友直播(复制式过滤: 入参不可变列表时原地 removeIf 抛异常,
-                // 会中断本回调内后续 business_promot/activityhead 清理)
+                // 会中断本回调内后续 business_promot/activityhead 清理);
+                // 无命中不写回, 避免每条响应都分配一张与原表等大的副本(与其余
+                // 过滤分支的 size 守卫口径一致)
                 val frsMainTabList = XposedHelpers.getObjectField(param.thisObject, "frs_main_tab_list") as? List<*>
                 if (frsMainTabList != null) {
-                    XposedHelpers.setObjectField(param.thisObject, "frs_main_tab_list", frsMainTabList.filter { tab ->
+                    val filteredTabs = frsMainTabList.filter { tab ->
                         tab == null || runCatching {
                             XposedHelpers.getObjectField(tab, "tab_type") as? Int != 92
                         }.getOrDefault(true)
-                    })
+                    }
+                    if (filteredTabs.size != frsMainTabList.size) {
+                        XposedHelpers.setObjectField(param.thisObject, "frs_main_tab_list", filteredTabs)
+                    }
                 }
 
                 // 弹出广告

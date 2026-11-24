@@ -234,14 +234,18 @@ class OneKeyLottery : XposedContext(), IHooker {
         // 捕获消息中心的群聊列表数据（群助手所在的签到群即在此列表中）
         runCatching {
             val modelClass = findClass(LOTTERY_MSG_CENTER_MODEL)
-            listOf("setData", "updateGroupchatList").forEach { name ->
+            // for 而非 forEach: 外层 forEach 与内层 list.forEach 产生同名 label,
+            // 内层 return@forEach 编译歧义(警告), 语义上是"跳过当前 pojo"
+            for (name in listOf("setData", "updateGroupchatList")) {
                 XposedBridge.hookAllMethods(modelClass, name, object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         // 回调内反射(宿主 pojo getter)在版本漂移时会抛 NoSuchMethodError:
                         // 桥接层虽会吞掉不至崩宿主, 但捕获静默失效并刷 LSPosed 日志,
                         // 就地包裹并记入模块日志
-                        runCatching {
-                            val list = param.args.getOrNull(0) as? List<*> ?: return@runCatching
+                        // 显式 label: 外层注册 runCatching 与内层包裹 runCatching 同名,
+                        // return@runCatching 编译歧义(警告)
+                        runCatching parse@{
+                            val list = param.args.getOrNull(0) as? List<*> ?: return@parse
                             list.forEach { pojo ->
                                 pojo ?: return@forEach
                                 // TYPE_GROUP_MSG = 1
@@ -271,7 +275,16 @@ class OneKeyLottery : XposedContext(), IHooker {
                 findClass(LOTTERY_CHAT_MSG_MANAGER_IMPL), "notifyLiveChatMsg", object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         LotteryPoisonGuard.blockPoisonMsgs(param)
-                        param.args.forEach { arg -> collectLotteryLiveMsg(arg) }
+                        // 标量参数直接跳过: notifyLiveChatMsg(int,long,List,boolean)
+                        // (22.14 实证) 每条多播会为 3 个标量参数各走一遍必失败的
+                        // getCategory 反射, 高频路径纯浪费; List 与其余引用类型
+                        // (单个 pojo 形态的重载)照常收集
+                        param.args.forEach { arg ->
+                            when (arg) {
+                                null, is Number, is Boolean, is String -> {}
+                                else -> collectLotteryLiveMsg(arg)
+                            }
+                        }
                     }
                 }
             )
@@ -286,20 +299,8 @@ class OneKeyLottery : XposedContext(), IHooker {
         runCatching { LotteryPoisonGuard.installRoomTimeClamps() }
             .onFailure { lotteryTsLog("一键抽奖 hook(时间戳钳制)注册失败: $it") }
 
-        // 调试旁听：记录聊天室发送入口调用（logcat 过滤 TSLottery）
-        runCatching {
-            val bimClass = findClass(LOTTERY_BIM_MANAGER)
-            for (name in listOf("sendMsgToChatRoomWithSafeParam", "sendMsgToChatRoom")) {
-                XposedBridge.hookAllMethods(bimClass, name, object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        runCatching {
-                            val roomId = param.args.getOrNull(1)
-                            android.util.Log.d("TSLottery", "send($name) room=$roomId")
-                        }
-                    }
-                })
-            }
-        }.onFailure { lotteryTsLog("一键抽奖 hook(发送入口旁听)注册失败: $it") }
+        // 调试旁听钩子已随审查移除(2026-11-21): 每次发送打一条无开关的 Log.d,
+        // 违反日志约定; 发送行为本身有 sendAck/lotteryTsLog 全链路留痕, 无需旁听
 
         // 自适应转换链学习注册已拆至 LotteryChainLearner.install()（识别/挂钩/毒过滤同源搬移）
         LotteryChainLearner.install()
@@ -450,6 +451,11 @@ class OneKeyLottery : XposedContext(), IHooker {
             }
     }
 
+    // @Suppress("DEPRECATION"): SCREEN_DIM_WAKE_LOCK/WIFI_MODE_FULL_HIGH_PERF 在
+    // API 28/29 起 deprecated 且建议的新 API 均不满足本场景——FLAG_KEEP_SCREEN_ON
+    // 仅窗口可见时有效(切后台失效), WIFI_MODE_FULL_LOW_LATENCY 常量 API 29 才有
+    // (本项目目标设备 Android 9/API 28 无此常量)。旧常量在全部目标 API 上行为正常
+    @Suppress("DEPRECATION")
     private fun startLottery() {
         if (!mSending.compareAndSet(false, true)) return
         // 开跑即复位点击占位: 否则本轮结束后 mClickPending 残留 true, 下轮点击被挡死
@@ -710,10 +716,12 @@ class OneKeyLottery : XposedContext(), IHooker {
             }
 
             // 阶段一收尾：对没能发出的房间（详情超时/进房失败等）原样重试一轮。
-            // 无群助手的房间（系统消息群/私聊等）重试必然再失败, 不再列入;
-            // 补发只针对真正没发出去的房间；已发出的房间绝不重发
+            // 无群助手（系统消息群/私聊等）与确定性失败（err(botUid=0)）的房间
+            // 重试必然再失败, 不再列入; 补发只针对真正没发出去的房间；已发出的
+            // 房间绝不重发
             val failedOnce = tasks.filter {
-                !it.sent && !it.confirmed && it.attempts < MAX_SEND_ATTEMPTS && !it.noAssistant
+                !it.sent && !it.confirmed && it.attempts < MAX_SEND_ATTEMPTS &&
+                    !it.noAssistant && !it.fatalFail
             }
             var retriedOk = 0
             if (failedOnce.isNotEmpty() && !mSuppressed) {
@@ -757,9 +765,12 @@ class OneKeyLottery : XposedContext(), IHooker {
             }
 
             // 第三步（核查阶段）：对照房间总数与成功频道数，排除已成功者得到遗漏名单
-            // （无群助手的房间从遗漏名单剔除: 它们永远不可能成功, 不进补发轮）
+            // （无群助手与确定性失败的房间从遗漏名单剔除: 它们永远不可能成功,
+            // 不进补发轮）
             recordSentOk()
-            var missing = tasks.filter { !sentOkChannels.containsKey(it.roomId) && !it.noAssistant }
+            var missing = tasks.filter {
+                !sentOkChannels.containsKey(it.roomId) && !it.noAssistant && !it.fatalFail
+            }
             XposedBridge.log(
                 "一键抽奖 核查：房间总数=$totalCount，成功发送=${sentOkChannels.size}，未成功=${missing.size}" +
                     (if (missing.isNotEmpty()) "（${missing.joinToString("、") { it.roomName }}）" else "")
@@ -794,7 +805,9 @@ class OneKeyLottery : XposedContext(), IHooker {
                     }
                 }
                 recordSentOk()
-                missing = tasks.filter { !sentOkChannels.containsKey(it.roomId) && !it.noAssistant }
+                missing = tasks.filter {
+                    !sentOkChannels.containsKey(it.roomId) && !it.noAssistant && !it.fatalFail
+                }
                 XposedBridge.log(
                     "一键抽奖 补发第${topUpRound}轮后核查：成功发送${sentOkChannels.size}/$totalCount" +
                         (if (missing.isNotEmpty())
@@ -855,7 +868,7 @@ class OneKeyLottery : XposedContext(), IHooker {
     private fun getGroupRooms(context: android.content.Context): List<Pair<Long, String>> {
         val merged = LinkedHashMap<Long, String>()
 
-        for (uid in currentAccountUids(context)) {
+        for (uid in currentAccountUids()) {
             val dbFile = context.getDatabasePath("$uid.db")
             if (!dbFile.exists()) continue
             try {
@@ -943,7 +956,7 @@ class OneKeyLottery : XposedContext(), IHooker {
 
     // 当前账号 uid 候选（仅当前登录账号, 不做目录扫描——旧账号残留库会污染频道列表;
     // LotteryPoisonGuard.candidateAccountUids 的目录扫描仅供免打扰/时间戳修复等按账号隔离的场景使用）
-    private fun currentAccountUids(context: android.content.Context): List<String> {
+    private fun currentAccountUids(): List<String> {
         val candidateUids = mutableListOf<String>()
         try {
             // getCurrentAccountId 返回 long, 需按 Number 兼容取值(强转 String 会得到 null)
@@ -1041,12 +1054,17 @@ class OneKeyLottery : XposedContext(), IHooker {
                 return false
             }
 
-            // 进房：结构定位 (n96, FastRequest$b, int)；发送前必须 enterChatRoom。
-            // 22.14 形态漂移(2026-11-17 三版本反编译核对)：本形状过滤(参数1=FastRequest$b)
-            // 在 22.14 GroupChatRepo 无命中(d0 的参数1是 d67; p0 只有 2 参)，会抛
-            // NoSuchMethodError 被逐房间捕获——表现为全部房间"发送未完成"。22.14 真身
-            // 疑似 p0(FastRequest.b<ChatRoomDetail>, int)(内部转发 d0)，修复方向与实证
-            // 见 README"22.14 GroupChatRepo 进房/详情方法形态漂移"一节
+            // 进房：结构定位 (d67回调, FastRequest$b, int)；发送前必须 enterChatRoom。
+            // 22.11-22.14 四版本反编译核实(2026-11-21 修正 2026-11-17 的误记): 该形状
+            // 过滤在 22.12-22.14 **唯一命中进房方法本体**——22.14 为 V(d67, FastRequest$b, int)
+            // (GroupChatRepo.java:1687, 体内 f.h/f.e/f.n 调 w57 进房链, 回调 t 即进房监听),
+            // 22.13/22.12 为 V(c67/r57, FastRequest$b, int), 22.11 为 U(k57, FastRequest$b, int),
+            // 形状四版本稳定。此前注释称"22.14 无命中、真身疑似 p0"系核对时漏看 V:
+            // p0(FastRequest$b, int) 是 j 门控的详情重拉转发(GroupChatRepo.java:1987),
+            // 按它定位会让"进房"退化为一次空转的详情刷新——勿改回。
+            // 残余风险(待上机确认): invoke(repo,null,null,0) 传 null 回调, 进房成功回调
+            // t.a 首行 this.a.a(...) 理论 NPE, 22.11 起结构一致且实测可用(异常被 IMSDK
+            // 回调分发吞掉); 若上机暴露问题, 可用 java.lang.reflect.Proxy 生成 d67 真实回调
             val c0 = repoClass.declaredMethods.firstOrNull {
                 it.parameterTypes.size == 3 && it.parameterTypes[2] == Int::class.javaPrimitiveType &&
                     it.parameterTypes[1].name.endsWith("FastRequest\$b")
@@ -1160,7 +1178,7 @@ class OneKeyLottery : XposedContext(), IHooker {
                 }
                 // 重发前复核送达证据：拿到群助手回复或自身回显即实际已送达，不重发
                 val replyAtMe = hasLotteryReplyAtMe(todayMsgs, task)
-                if (replyAtMe || hasOwnEcho(todayMsgs, task)) {
+                if (replyAtMe || hasOwnEcho(todayMsgs)) {
                     task.sent = true
                     if (replyAtMe) {
                         task.confirmed = true
@@ -1216,7 +1234,7 @@ class OneKeyLottery : XposedContext(), IHooker {
         val sinceMs = if (task.sentAt > 0) task.sentAt - 10_000L else LotteryLedger.todayStartMillis()
         val msgs = if (history.isEmpty()) live
         else (live + history).filter { it.timeMs >= sinceMs }.distinctBy { it.timeMs to it.content }
-        if (!task.echoed && hasOwnEcho(msgs, task)) task.echoed = true
+        if (!task.echoed && hasOwnEcho(msgs)) task.echoed = true
         if (hasLotteryReplyAtMe(msgs, task)) {
             task.confirmed = true
             LotteryLedger.daySetAdd(getContext().applicationContext, "claimed", task.roomId)
@@ -1272,8 +1290,13 @@ class OneKeyLottery : XposedContext(), IHooker {
             task.sendAck = doSend(appCtx, repo, task.roomId, task.uk, task.botName, task.botPortrait)
             if (task.sendAck.startsWith("err")) {
                 lotteryTsLog("一键抽奖(${task.roomId}) 第${attempt}次发送失败 ack=${task.sendAck}")
-                // uk 换算失败是确定性的, 重试只会空烧重试次数, 直接交回失败分类
-                if (task.sendAck == "err(botUid=0)") break
+                // uk 换算失败是确定性的, 重试只会空烧重试次数: 置位 fatalFail 后
+                // 该房间从阶段一重试与补发轮名单剔除(不重付进房+详情流程),
+                // 结果仍计入最终汇总的失败项
+                if (task.sendAck == "err(botUid=0)") {
+                    task.fatalFail = true
+                    break
+                }
                 if (!channelAlive(task)) break
                 continue
             }
@@ -1384,8 +1407,8 @@ class OneKeyLottery : XposedContext(), IHooker {
             clazz = clazz.superclass
         }
         zMethod ?: throw NoSuchMethodError("repo.send(TbBaseMsg)")
-        zMethod!!.isAccessible = true
-        zMethod!!.invoke(repo, tbMsg)
+        zMethod.isAccessible = true
+        zMethod.invoke(repo, tbMsg)
 
         // 转换器：三级回退。
         // ① 22.11 具名链（vea/wea/bfa 的漂移名）：注册表 ekb.c.b(TbTextMsg)→lkb 转换器，
@@ -1407,8 +1430,10 @@ class OneKeyLottery : XposedContext(), IHooker {
                     ?: error("ekb.c 注册表为 null")
                 val wkb = XposedHelpers.callMethod(registry, "b", tbMsg.javaClass)
                     ?: error("ekb 注册表未命中 ${tbMsg.javaClass.name}")
-                val marker = groupMarker
-                    ?: XposedHelpers.getStaticObjectField(findClass("com.baidu.tieba.okb"), "a")
+                // groupMarker 为 null 的唯一原因是外层同一调用已失败(okb.a 反射抛错,
+                // 字段查找是确定性的, 重复调用必然同样失败)——此前"内层重试一次"是
+                // 死回退, 改为显式报错, 失败原因在日志里可读
+                val marker = groupMarker ?: error("群聊 marker(okb.a)反射失败, 22.11 转换链不可用")
                 chatMsg = XposedHelpers.callMethod(wkb, "b", marker, tbMsg)
                 if (chatMsg != null) {
                     lotteryTsLog("一键抽奖($roomId) 22.11转换链成功: wkb=${wkb.javaClass.name}")
@@ -1421,7 +1446,7 @@ class OneKeyLottery : XposedContext(), IHooker {
             // 自学习链（未来版本混淆名漂移后的兜底）：实例/方法已由 LotteryChainLearner
             // 从流量捕获；未学习到时返回 null 直接落旧版回退链
             chatMsg = LotteryChainLearner.convertViaLearnedChain(
-                tbMsg, tbBaseMsgClass, chatMsgSdkClass, groupMarker, roomId
+                tbMsg, tbBaseMsgClass, chatMsgSdkClass, groupMarker
             )
             if (chatMsg != null) {
                 lotteryTsLog("一键抽奖($roomId) 自适应转换链成功")
@@ -1691,7 +1716,7 @@ class OneKeyLottery : XposedContext(), IHooker {
     // 本账号口令的回显（发送后数秒内经多播路径回来）：仅按数字 uid 精确比对，
     // 不用昵称（昵称可重名）。数字 uid 来源：getUK 数字返回、uk 命中的 at 条目回学。
     // uid 尚未拿到时放弃回显判定（宁缺勿错，补发另有"该房间有流量"证据门槛兜底）
-    private fun hasOwnEcho(msgs: List<LotteryLiveMsg>, task: LotteryRoomTask): Boolean {
+    private fun hasOwnEcho(msgs: List<LotteryLiveMsg>): Boolean {
         if (mMyImUid == 0L) return false
         return msgs.any { it.fromUid == mMyImUid && it.content.contains("领取今日福利") }
     }

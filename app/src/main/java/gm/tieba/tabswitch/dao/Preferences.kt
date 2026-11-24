@@ -117,11 +117,19 @@ object Preferences {
     }
 
     // 自动打开签到界面的当日标记: 语义与 putSignDate 不同——发起拉起即落盘,
-    // 不依赖用户是否完成签到("每天一次"是展示频控而非完成状态)
+    // 不依赖用户是否完成签到("每天一次"是展示频控而非完成状态);
+    // 拉起失败时由调用方清除标记回滚, 让当天后续冷启动可重试
     fun putOpenSignDate(dayOfYear: Int, year: Int) {
         sTsConfig.edit()
             .putInt("open_sign_date", dayOfYear)
             .putInt("open_sign_year", year)
+            .apply()
+    }
+
+    fun clearOpenSignDate() {
+        sTsConfig.edit()
+            .remove("open_sign_date")
+            .remove("open_sign_year")
             .apply()
     }
 

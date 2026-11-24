@@ -203,7 +203,13 @@ public final class XposedBridge {
         for (Constructor<?> ctor : clazz.getDeclaredConstructors()) {
             try {
                 handles.add(install(ctor, callback, callback.getPriority()));
-            } catch (Throwable ignored) {
+            } catch (Throwable tr) {
+                // 与 hookAllMethods 同口径留痕: 全部构造器静默失败时(如 R8 改名/
+                // 框架侧安装异常), 调用方(LotteryChainLearner 的 TbTextMsg 构造
+                // 旁听)只会表现为"学习链永不就绪"而无线索
+                log("hookAllConstructors: install " + clazz.getName()
+                        + "#<init>" + java.util.Arrays.toString(ctor.getParameterTypes())
+                        + " failed: " + tr);
             }
         }
         return handles;
@@ -340,9 +346,10 @@ public final class XposedBridge {
                 mCallback.afterHookedMethod(param);
             } catch (Throwable tr) {
                 logHookError("after", tr);
-                // after 抛异常时保留原返回值，与旧版一致
-                trace("done");
-                return result;
+                // after 抛异常时不在此提前 return: 沿用尾部公共出口按 param.result
+                // 收口(与旧版一致)——回调抛异常前已 setResult 的值保留; 未设置时
+                // result 字段已持有原方法返回值(上方 setResultInternal), 两种情形
+                // 口径统一。此前的"提前 return result"会把已 set 的值丢掉
             }
             trace("done");
             if (param.hasThrowable()) throw param.getThrowable();
