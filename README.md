@@ -1,6 +1,6 @@
 # TiebaTS（贴吧TS）
 
-[![Telegram](https://img.shields.io/badge/Telegram-群组-26A5E4?logo=telegram&logoColor=white)](https://t.me/+S93Y8WbDEwczYjU1)
+[![Telegram](https://img.shields.io/badge/Telegram-群组-26A5E4?logo=telegram&logoColor=white)](https://t.me/+hA4cxr3IA6NhYWI1)
 
 > **项目延续说明**：本仓库是 [GuhDoy/TiebaTS](https://github.com/GuhDoy/TiebaTS)（已归档，2024-08 停更）的后续开发版本，原项目的功能在此基础之上继续维护与演进。感谢原作者与社区贡献者。
 
