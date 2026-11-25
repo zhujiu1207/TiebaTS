@@ -3,6 +3,7 @@
 //
 
 #include <stdio.h>
+#include <inttypes.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <errno.h>
@@ -233,7 +234,9 @@ static bool isWritableRange(uintptr_t start, uintptr_t end) {
     uintptr_t map_start, map_end;
     char perms[8];
     while (fgets(line, sizeof(line), fp) != NULL) {
-        if (sscanf(line, "%lx-%lx %7s", &map_start, &map_end, perms) == 3) {
+        // PRIxPTR 而非 %lx: uintptr_t 在 32 位 ABI 下是 unsigned int(%lx 会
+        // -Werror=format 报错), 64 位下才是 unsigned long——统一按指针宽度格式化
+        if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %7s", &map_start, &map_end, perms) == 3) {
             // maps 区间与待检区间相交即纳入判定
             if (map_start < end && start < map_end) {
                 covered = true;

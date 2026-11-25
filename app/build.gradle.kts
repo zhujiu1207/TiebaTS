@@ -40,7 +40,14 @@ android {
 
         externalNativeBuild {
             cmake {
-                abiFilters("arm64-v8a")
+                // 32 位兼容(2026-11-25 真机回归): vivo 新机(Android 17)上宿主以 32 位
+                // 进程运行(64bit=false), 其 LSPatch 环境加载模块 so 时报
+                // "libdexkit.so is 64-bit instead of 32-bit"——宿主进程位宽决定可加载
+                // 的 so 位宽, 模块此前只打 arm64-v8a 时该环境 libdexkit 物理不可用,
+                // 反混淆必败(三类加载路径全部撞上同一堵墙)。恢复 v7a: DexKit 2.3.0
+                // aar 自带全 ABI so(依赖库直带), 自有 native 库(libhide/check)需
+                // cmake 真编译——arm64 之外仅编译 v7a(模拟器 x86 系仍排除, 无真机场景)
+                abiFilters("arm64-v8a", "armeabi-v7a")
                 arguments("-DANDROID_STL=none")
             }
         }
@@ -132,7 +139,9 @@ android {
                 "/META-INF/version-control-info.textproto"
             )
         )
-        jniLibs.excludes.addAll(listOf("**/liblog.so", "/lib/x86/**", "/lib/x86_64/**", "/lib/armeabi-v7a/**"))
+        // v7a 恢复进包(见 defaultConfig.abiFilters 注释): 仅继续排除 x86 系(无真机场景,
+        // 排除是省体积)。liblog.so 各 ABI 一并排除(自有 native 不链接它, DexKit so 自带依赖)
+        jniLibs.excludes.addAll(listOf("**/liblog.so", "/lib/x86/**", "/lib/x86_64/**"))
     }
     buildFeatures {
         prefab = true

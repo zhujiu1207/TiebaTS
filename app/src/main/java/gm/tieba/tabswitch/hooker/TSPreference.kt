@@ -27,6 +27,7 @@ import gm.tieba.tabswitch.dao.Preferences.putBoolean
 import gm.tieba.tabswitch.dao.Preferences.putEULAAccepted
 import gm.tieba.tabswitch.hooker.TSPreferenceHelper.PreferenceLayout
 import gm.tieba.tabswitch.hooker.TSPreferenceHelper.SwitchButtonHolder
+import gm.tieba.tabswitch.dao.ThreadSnapshotStore
 import gm.tieba.tabswitch.hooker.TSPreferenceHelper.createButton
 import gm.tieba.tabswitch.hooker.add.ThreadSnapshot
 import gm.tieba.tabswitch.hooker.deobfuscation.DeobfuscationHelper.getTbVersion
@@ -592,7 +593,8 @@ class TSPreference : XposedContext(), IHooker, Obfuscated {
         preferenceLayout.addView(originSrcOnlyWifiButton)
 
         // 帖子浏览缓存: 开启时弹数量配置弹窗(自动保存帖数 1~1000, 保存即实时生效),
-        // 关闭直接关闭。hooker 按 thread_snapshot 键注册(activeHookerKeys),
+        // 关闭直接关闭并清空全部缓存(关闭即清缓存语义——开关不是暂停采集,
+        // 是重置; 重新开启从零积累)。hooker 按 thread_snapshot 键注册(activeHookerKeys),
         // 注册时 hook() 已把存储层容量对齐为设置值
         val threadSnapshot = SwitchButtonHolder(activity, "帖子浏览缓存", "thread_snapshot", SwitchButtonHolder.TYPE_SWITCH)
         threadSnapshot.setOnButtonClickListener { _ ->
@@ -603,6 +605,7 @@ class TSPreference : XposedContext(), IHooker, Obfuscated {
                 }
             } else {
                 threadSnapshot.turnSafely()
+                ThreadSnapshotStore.clearAll()
             }
         }
         preferenceLayout.addView(threadSnapshot)

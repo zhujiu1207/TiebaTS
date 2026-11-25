@@ -548,22 +548,38 @@ class XposedInit : XposedContext() {
                 } ?: false
             }
 
+            // 版本变化分支武装过反混淆钩子时, 下方规则缺失分支不得再注册第二个
+            // DeobfuscationHooker: 旧结构的 return 隐式保证了两个分支互斥, 改为
+            // "触发后继续正常加载"后互斥消失, 两实例各持一份确认框状态, 首页
+            // onResume 上会叠加弹出两个"检测到贴吧更新"(2026-11-25 vivo 真机用户
+            // 反馈"反混淆弹两次"的根因); 版本变化场景的扫描本就是全量重建,
+            // 已覆盖缺失规则, 补扫与其信息对话框均属冗余
+            var deobfsHookArmed = false
             if (isVersionChanged(getContext())) {
                 XposedBridge.log("Deobfuscation")
                 // 延迟触发: 首页(MainTab)渲染稳定后弹确认框, 用户确认后再执行反混淆,
                 // 完成后由用户确认重启; 不再重定向 Logo 页/冻结导航/自动重启。
-                // 本会话不加载任何 hooker(规则库即将重建), 裸跑贴吧
+                // 不再"本会话不加载 hooker 裸跑": 裸跑设计的前提是反混淆大概率成功
+                // (规则库重建后重启即恢复正常), 但反混淆可能确定性地失败(如 2026-11-25
+                // vivo 真机 32 位宿主进程装单 arm64 模块, libdexkit.so 无匹配位宽
+                // 副本, dlopen 报 "is 64-bit instead of 32-bit", 已以双 ABI 打包修复)
+                // ——裸跑会让这类环境陷入死锁: 反混淆必败, 每个会话
+                // 都裸跑, 设置界面(ts_pref)永远不注册, 用户连模块入口都找不到, 只能
+                // 看到失败弹窗。改为触发反混淆的同时继续走正常加载: hooker 按既有
+                // 规则逐条隔离(旧规则对同版本宿主仍有效), 新规则缺失部分自然降级;
+                // 反混淆成功则重启后进入"规则库完整"的正常路径, 行为与裸跑设计一致。
                 // 无论 hook() 成败都必须置位 sInited: hook() 非全防护, 注册失败抛出的
                 // 异常会被外层吞掉, 若不置位下一个 Application 实例会重复注册触发钩子
-                runCatching { DeobfuscationHooker(matchersList).hook() }
-                    .onFailure {
-                        // 反混淆是本会话唯一入口, 失败后"模块装了但功能全没了",
-                        // 两种日志都不留痕则用户反馈无从排查
-                        XposedBridge.log("DeobfuscationHooker hook failed: $it")
-                        Logger.log("版本变化触发反混淆失败: ${it.javaClass.name}: ${it.message}")
-                    }
+                val hookResult = runCatching { DeobfuscationHooker(matchersList).hook() }
+                deobfsHookArmed = hookResult.isSuccess
+                hookResult.onFailure {
+                    // 反混淆入口注册失败仍继续正常加载, 两种日志留痕供排查
+                    XposedBridge.log("DeobfuscationHooker hook failed: $it")
+                    Logger.log("版本变化触发反混淆失败: ${it.javaClass.name}: ${it.message}")
+                }
                 sInited.set(true)
-                return@hookAfterMethod
+                // 不 return: 落到下方正常加载路径(hooker 注册/规则缺失自愈), 与
+                // "版本未变"分支的唯一差异是叠加了一个反混淆确认钩子
             }
 
             // 规则缺失查询下沉到后台线程（内含等预热）：findMissing 的结果决定后续走
@@ -607,7 +623,9 @@ class XposedInit : XposedContext() {
                 )
             }
 
-            if (lostList.isNotEmpty() && !isTbVersionHigher && "com.baidu.tieba" == lpparam.processName) {
+            if (!deobfsHookArmed &&
+                lostList.isNotEmpty() && !isTbVersionHigher && "com.baidu.tieba" == lpparam.processName
+            ) {
                 // 规则缺失静默自愈(仅主进程): 模块更新引入新 matcher(或规则库损坏)时,
                 // 自动触发反混淆补扫(等首页稳定后弹确认框, 用户确认后执行,
                 // 完成后由用户确认重启),
@@ -633,7 +651,8 @@ class XposedInit : XposedContext() {
                             Logger.log("规则缺失补扫触发反混淆失败: ${it.javaClass.name}: ${it.message}")
                         }
                     sInited.set(true)
-                    return@hookAfterMethod
+                    // 不 return: 与版本变化路径同口径——补扫触发后继续正常加载,
+                    // 反混淆确定性失败的环境(如 32 位宿主无匹配位宽 so)不至死锁(设置入口可注册)
                 }
                 // hookSafely 隔离: 该对话框钩点恰在"规则缺失"(最可能版本漂移)场景
                 // 才注册, 若裸注册抛 ClassNotFound/NoSuchMethod 被外层 after 包装吞掉,

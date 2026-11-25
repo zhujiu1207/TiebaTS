@@ -146,7 +146,9 @@ object DexKitLoader : XposedContext() {
             sawApk = true
             try {
                 ZipFile(apk).use { zip ->
-                    for (abi in Build.SUPPORTED_ABIS) {
+                    // ABI 候选按进程位宽排序(与 XposedContext.load 同口径): 32 位进程
+                    // 加载 arm64 so 报 "is 64-bit instead of 32-bit", 必须 v7a 优先
+                    for (abi in abiCandidates()) {
                         val entry = zip.getEntry("lib/$abi/$LIBRARY_FILE_NAME") ?: continue
                         System.load(extractEntry(context, apk, zip, entry, abi).absolutePath)
                         XposedBridge.log("$TAG: 已从模块 APK 解包加载 lib/$abi/$LIBRARY_FILE_NAME")
@@ -161,6 +163,10 @@ object DexKitLoader : XposedContext() {
         if (!sawApk) errors.add(IllegalStateException("模块 APK 路径均不可用"))
         return false
     }
+
+    // 进程位宽对应的 ABI 候选序: 与 XposedContext.abiCandidates 同口径(单点事实源
+    // 放 XposedContext, 此处引用避免两处漂移)
+    private fun abiCandidates(): List<String> = XposedContext.abiCandidatesForCurrentProcess()
 
     /** 模块 APK 候选路径: sPath(框架提供的模块路径) + 包管理器解析的 sourceDir/split。 */
     private fun resolveModuleApkPaths(context: Context): List<File> {

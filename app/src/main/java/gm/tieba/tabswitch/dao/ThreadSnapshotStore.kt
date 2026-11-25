@@ -143,4 +143,14 @@ object ThreadSnapshotStore {
         }
     }
 
+    // 清空全部缓存(功能关闭时调用——"关闭即清缓存"语义, 不留磁盘残留)
+    @Synchronized
+    fun clearAll() {
+        if (!::db.isInitialized) return
+        try {
+            db.execSQL("DELETE FROM `ThreadSnapshot`")
+        } catch (tr: Throwable) {
+            Logger.log("缓存清空失败: $tr")
+        }
+    }
 }
