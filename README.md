@@ -6,7 +6,7 @@
 
 一个基于 [libxposed API 102](https://github.com/libxposed/api) 的百度贴吧增强模块，注入宿主 `com.baidu.tieba`。
 
-- 当前适配宿主版本：**22.14.1.0**（`app/build.gradle.kts` 中 `BuildConfig.TARGET_VERSION`）
+- 当前适配宿主版本：**22.15.1.1**（`app/build.gradle.kts` 中 `BuildConfig.TARGET_VERSION`）
 - 最低支持宿主版本：12.53.1.0（`BuildConfig.MIN_VERSION`）
 
 > **⚠️ 已知问题**：Android 16+ 设备上可能出现宿主闪退，具体原因暂不清楚（可能与新系统行为变化或 native 兼容性有关），目前正在排查。如果你在这类设备上遇到闪退，欢迎提供日志（模块设置里开启「运行日志」后导出）到 [Issues](../../issues)，或直接提交修复 PR——PR 建到本仓库即可。

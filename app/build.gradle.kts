@@ -31,11 +31,11 @@ android {
         minSdk = 28
         targetSdk = targetSdkVersion
         versionCode = commitCount
-        versionName = "5.2.7"
+        versionName = "5.3.0"
         if (versionName!!.contains("alpha") || versionName!!.contains("beta")) {
             versionNameSuffix = ".$commitCountSinceLatestTag"
         }
-        buildConfigField("String", "TARGET_VERSION", "\"22.14.1.0\"")
+        buildConfigField("String", "TARGET_VERSION", "\"22.15.1.1\"")
         buildConfigField("String", "MIN_VERSION", "\"12.53.1.0\"")
 
         externalNativeBuild {

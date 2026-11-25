@@ -90,14 +90,17 @@ class PurgeVideo : XposedContext(), IHooker, Obfuscated {
             val cardViewHolderClass = findClass("com.baidu.tieba.card.holder.CardViewHolder")
             val videoHolderClass =
                 findClass("com.baidu.tieba.homepage.personalize.adapter.HomePageCardVideoViewHolder")
-            // 构造参数类名随版本混淆轮换(nl8/pj8/yk8), 混淆字典跨版本漂移:
+            // 构造参数类名随版本混淆轮换(nl8/pj8/yk8/nm8/rm8), 混淆字典跨版本漂移:
             // 逐候选尝试挂构造钩子(类存在但构造签名不符时继续下一个),
             // 全部失败时静默放弃(兜底链前置的 CardVideoView 钩子仍在)。
             // CardViewHolder 泛型化为 <T extends 卡片视图基类>: 22.12 为 yk8,
-            // 22.13 轮换为 nl8, 22.14 轮换为 ol8(同为 T extends BaseCardInfo,
-            // 构造单参数一致; nl8 在 22.14 仍存在但已退化为 ol8 的子类, 精确
-            // 参数匹配不再命中, 故 ol8 必须置首)
+            // 22.13 轮换为 nl8, 22.14 轮换为 ol8(同为 T extends BaseCardInfo),
+            // 22.15 轮换为 nm8(abstract, T extends BaseCardInfo; 视频卡数据类为
+            // rm8 extends nm8<vn8>——nl8 在 22.14 仍存在但已退化为 ol8 的子类、
+            // 22.15 的 ol8 已同名异义为 WebView 监听类, 精确参数匹配不再命中,
+            // 故新名必须置首)
             for (name in listOf(
+                "com.baidu.tieba.nm8", "com.baidu.tieba.rm8",
                 "com.baidu.tieba.ol8", "com.baidu.tieba.nl8",
                 "com.baidu.tieba.yk8", "com.baidu.tieba.pj8", "com.baidu.tieba.tj8"
             )) {

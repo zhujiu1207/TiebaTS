@@ -118,9 +118,9 @@ class OriginSrc : XposedContext(), IHooker {
                     // 查看器取图函数: 静态方法 c(PbContent), 按 cdn_src > src >
                     // big_cdn_src > origin_src 的优先级返回查看器主图 URL, 仅被
                     // 查看器数据构建的同文件 a(PostData, int) 调用, 楼层不经过它。
-                    // 类名随版本漂移(f7e/kwd/u2e/y4e, 方法名与签名 22.11-22.14 一致,
-                    // 已逐一在 jadx 反编译源核对), 这里逐个探测; findAndHookMethod 按
-                    // 参数类型精确匹配, 类存在但签名漂移时抛异常落到下一个候选
+                    // 类名随版本漂移(f7e/kwd/u2e/y4e, 22.15 起为 l8e, 方法名与签名
+                    // 22.11-22.15 一致, 已逐一在 jadx 反编译源核对), 这里逐个探测;
+                    // findAndHookMethod 按参数类型精确匹配, 类存在但签名漂移时抛异常落到下一个候选
                     val pbContentClass = XposedHelpers.findClass("tbclient.PbContent", sClassLoader)
                     var lastFailure: Throwable? = null
                     for (candidate in PB_VIEWER_URL_CLASS_CANDIDATES) {
@@ -147,7 +147,7 @@ class OriginSrc : XposedContext(), IHooker {
                         }
                     }
                     throw IllegalStateException(
-                        "查看器取图函数未定位到(f7e/kwd/u2e/y4e 均未命中), 疑似宿主漂移 -- $lastFailure"
+                        "查看器取图函数未定位到(l8e/f7e/kwd/u2e/y4e 均未命中), 疑似宿主漂移 -- $lastFailure"
                     )
                 }
 
@@ -252,9 +252,11 @@ class OriginSrc : XposedContext(), IHooker {
 }
 
 private val PB_VIEWER_URL_CLASS_CANDIDATES = listOf(
-    // 22.11 / 22.12 / 22.13 / 22.14 的查看器取图类(仅类名漂移; 22.14 的 y4e
-    // 等旧名被宿主回收复用为无关节点, 类存在但 c(PbContent) 已不存在,
+    // 22.11~22.15 的查看器取图类(仅类名漂移, 22.15=f7e→l8e, a(PostData,int)/
+    // c(PbContent) 方法布局逐字同构); 旧名(如 22.14 的 y4e)被宿主回收复用为
+    // 无关节点时, 类存在但 c(PbContent) 已不存在,
     // findAndHookMethod 按参数精确匹配自动落空到下一候选)
+    "com.baidu.tieba.l8e",
     "com.baidu.tieba.f7e",
     "com.baidu.tieba.kwd",
     "com.baidu.tieba.u2e",

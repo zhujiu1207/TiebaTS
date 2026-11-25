@@ -72,11 +72,12 @@ class PurgeChatFloat : XposedContext(), IHooker {
     // 工厂类名随宿主版本混淆轮换, 逐候选锚定: 22.12.1.0 实测工厂为 es6
     // (i(TopNotifyData, kp8.e)→qr6 原样存在), 22.13.1.1 轮换为 vs6
     // (与 22.12 的 ls6 同构, i(TopNotifyData, ir8.e)→hs6), 22.14.1.0 轮换为
-    // ws6(与 22.13 的 vs6 同构, i(TopNotifyData, jr8.e)→is6); 排在后面的旧名
+    // ws6(与 22.13 的 vs6 同构, i(TopNotifyData, jr8.e)→is6), 22.15.1.1 轮换为
+    // pt6(与 22.14 的 ws6 同构, i(TopNotifyData, is8.e)→bt6); 排在后面的旧名
     // 形状校验不通过自动跳过, 仅多一条启动 diag
     private fun hookTopNotifyFactory(): Boolean {
         for (factoryName in listOf(
-            "com.baidu.tieba.ws6", "com.baidu.tieba.vs6",
+            "com.baidu.tieba.pt6", "com.baidu.tieba.ws6", "com.baidu.tieba.vs6",
             "com.baidu.tieba.ls6", "com.baidu.tieba.es6"
         )) {
             val hooked = try {

@@ -39,9 +39,12 @@ import kotlin.concurrent.thread
 // (方法布局与 22.12 的 t1b 完全同构, i() 返回 List), 条目轮换为 lp6(字段布局
 // 与旧 bp6 一致: int a / int i / String b / String c); 22.14.1.0 起数据源
 // 轮换为 h3b(方法布局与 22.13 的 q1b 完全同构, 连 i() 所在行号都一致),
-// 条目轮换为 mp6(字段布局同旧 lp6); 注意 22.13 的 t1b 是同名异义类
+// 条目轮换为 mp6(字段布局同旧 lp6); 22.15.1.1 起数据源轮换为 i4b
+// (i() 返回 List<fq6>, 方法布局与 22.14 的 h3b 完全同构), 条目轮换为 fq6
+// (字段布局同旧 mp6); 注意 22.13 的 t1b 是同名异义类
 // (顶栏背景配置, 无 i() 返回 List), 22.14 的 q1b 是同名异义页面类
-// (extends es<a1b>, 无 i() 返回 List), 返回类型校验自动排除。
+// (extends es<a1b>, 无 i() 返回 List), 22.15 的 h3b 是同名异义接口、
+// mp6 是 scheme 白名单工具类, 返回类型校验自动排除。
 // 探测失败自动回退旧名, 排在最前的新名命中后条目类取同代候选
 class HomeTopTab : XposedContext(), IHooker {
 
@@ -140,10 +143,10 @@ class HomeTopTab : XposedContext(), IHooker {
 
     // 候选类的 i() 必须返回 java.util.List 才是真正的数据源:
     // 同名类的无参 i() 可能被挪用为其他返回类型, 按返回类型区分
-    // (22.13 的 t1b 同名类即因此被排除)
+    // (22.13 的 t1b 同名类、22.15 的 h3b 同名接口即因此被排除)
     private fun resolveTabListSource(): String {
         for (name in listOf(
-            "com.baidu.tieba.h3b", "com.baidu.tieba.q1b",
+            "com.baidu.tieba.i4b", "com.baidu.tieba.h3b", "com.baidu.tieba.q1b",
             "com.baidu.tieba.t1b", "com.baidu.tieba.j0b"
         )) {
             val clazz = runCatching { findClass(name) }.getOrNull() ?: continue
@@ -162,12 +165,14 @@ class HomeTopTab : XposedContext(), IHooker {
     // 条目类与数据源同代: 数据源选定后取同代候选并校验字段布局
     // (22.12 的 uo6 只剩 String a, 22.13 的 t1b 无字段布局, 布局不符时被跳过;
     //  22.13 的条目为 lp6, 与 22.12 的 bp6 同代对应; 22.14 的条目为 mp6,
-    //  与 22.13 的 lp6 同代对应)
+    //  与 22.13 的 lp6 同代对应; 22.15 的条目为 fq6, 与 22.14 的 mp6 同代对应,
+    //  22.15 的 mp6 已同名异义为 scheme 白名单工具类, 字段布局不符自动跳过)
     private fun resolveEntryClass(sourceName: String): String {
         val entryCandidates = when (sourceName) {
             "com.baidu.tieba.t1b" -> listOf("com.baidu.tieba.bp6", "com.baidu.tieba.uo6")
             "com.baidu.tieba.q1b" -> listOf("com.baidu.tieba.lp6", "com.baidu.tieba.bp6", "com.baidu.tieba.uo6")
             "com.baidu.tieba.h3b" -> listOf("com.baidu.tieba.mp6", "com.baidu.tieba.lp6", "com.baidu.tieba.bp6")
+            "com.baidu.tieba.i4b" -> listOf("com.baidu.tieba.fq6", "com.baidu.tieba.mp6", "com.baidu.tieba.lp6")
             else -> listOf("com.baidu.tieba.uo6", "com.baidu.tieba.bp6")
         }
         for (name in entryCandidates) {
@@ -226,7 +231,7 @@ class HomeTopTab : XposedContext(), IHooker {
         tabs.add(if (anchor >= 0) anchor + 1 else 0, follow)
     }
 
-    private var mEntryClass: String = "com.baidu.tieba.mp6"
+    private var mEntryClass: String = "com.baidu.tieba.fq6"
 
     companion object {
         // Tab 操作首次失败日志标志: 数据源读取回调高频触发, 逐次落盘会刷屏

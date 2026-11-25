@@ -24,6 +24,7 @@ import gm.tieba.tabswitch.dao.Preferences.putBoolean
 import gm.tieba.tabswitch.dao.Preferences.putStringSet
 import gm.tieba.tabswitch.dao.Preferences.putSignature
 import gm.tieba.tabswitch.dao.Preferences.remove
+import gm.tieba.tabswitch.dao.ThreadSnapshotStore
 import gm.tieba.tabswitch.hooker.IHooker
 import gm.tieba.tabswitch.hooker.MAIN_TAB_ACTIVITY
 import gm.tieba.tabswitch.hooker.Obfuscated
@@ -33,6 +34,7 @@ import gm.tieba.tabswitch.hooker.add.ProfileUserId
 import gm.tieba.tabswitch.hooker.add.SaveImages
 import gm.tieba.tabswitch.hooker.add.SelectClipboard
 import gm.tieba.tabswitch.hooker.add.SubPbLatestSort
+import gm.tieba.tabswitch.hooker.add.ThreadSnapshot
 import gm.tieba.tabswitch.hooker.auto.AutoOpenSign
 import gm.tieba.tabswitch.hooker.auto.AutoSign
 import gm.tieba.tabswitch.hooker.auto.FrsTab
@@ -383,6 +385,8 @@ class XposedInit : XposedContext() {
             // 日志开关缓存失效监听: 必须在 init 后登记, 热路径 isEnabled 才能走缓存
             Logger.registerPrefsListener()
             AcRules.init(getContext())
+            // 帖子浏览缓存库: 与规则库同款惰性初始化, 失败静默降级(读写点按 isReady 守卫)
+            ThreadSnapshotStore.init(getContext())
             // Room 首次查询会在调用线程打开库文件并做 schema 校验: 启动路径的
             // findMissing 必须同步等结果, 把"打开连接"部分先在后台线程预热。
             // 预热与 findMissing 是并发启动的, 主线程若先到仍会同步承担打开开销,
@@ -485,6 +489,7 @@ class XposedInit : XposedContext() {
                 ::ProfileUserId,
                 ::UserFilter,
                 ::SubPbLatestSort,
+                ::ThreadSnapshot,
                 ::AutoRefresh,
                 ::LowSpecMode
             )

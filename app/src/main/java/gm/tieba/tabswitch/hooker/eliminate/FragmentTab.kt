@@ -58,12 +58,14 @@ class FragmentTab : XposedContext(), IHooker, Obfuscated {
         ) {
             // 22.12 起规则锚点("retailStore" 字符串常量)已移出 delegate 类, DexKit
             // 组合特征不再成立, 按版本硬编码兜底: delegate 为未混淆 RetailStoreFragment
-            // 的绑定类(22.12=loe, 22.13=sqe, 22.14=zse; 均含 createFragmentTabStructure +
-            // "retailStore" + MainTabCommonIndicator 强转, 形态一致)。绑定前校验
-            // createFragmentTabStructure 仍存在, 类名再漂移时静默放弃
+            // 的绑定类(22.12=loe, 22.13=sqe, 22.14=zse, 22.15=lue; 均含
+            // createFragmentTabStructure + "retailStore" + MainTabCommonIndicator 强转,
+            // 形态一致)。绑定前校验 createFragmentTabStructure 仍存在, 类名再漂移时
+            // 静默放弃
             runCatching {
                 val fallback = listOf(
-                    "com.baidu.tieba.zse", "com.baidu.tieba.sqe", "com.baidu.tieba.loe"
+                    "com.baidu.tieba.lue", "com.baidu.tieba.zse",
+                    "com.baidu.tieba.sqe", "com.baidu.tieba.loe"
                 ).firstOrNull { name ->
                     runCatching {
                         findClass(name).methods.any { it.name == "createFragmentTabStructure" }
@@ -72,7 +74,7 @@ class FragmentTab : XposedContext(), IHooker, Obfuscated {
                 if (fallback != null) {
                     retailStoreDelegateClass = fallback
                 } else {
-                    logBoth("FragmentTab: 22.12+ 小卖部兜底类 zse/sqe/loe 形态漂移, 放弃绑定")
+                    logBoth("FragmentTab: 22.12+ 小卖部兜底类 lue/zse/sqe/loe 形态漂移, 放弃绑定")
                 }
             }.onFailure {
                 logBoth("FragmentTab: 22.12+ 小卖部兜底类不存在 -- ${it.javaClass.simpleName}")
@@ -400,20 +402,24 @@ class FragmentTab : XposedContext(), IHooker, Obfuscated {
 
                     // 打开聊天页时的精准兜底: MsgChatCenterSliceView.g0() 是聊天页拉会话
                     // 的唯一入口(sendMessage(new RequestMemoryListMessage(1))), 请求经
-                    // ImMemoryCacheRegister 的 d 任务(2016007)从内存管理类(22.14=fob)
+                    // ImMemoryCacheRegister 的 d 任务(2016007)从内存管理类(22.15=gpb)
                     // 的内存列表取数——若启动期的 2005018 补派发时机不佳(登录态未就绪,
                     // 2016008 网络请求静默失败), 内存库为空则列表恒空。此处在该入口前
                     // 检查 z()(内存库加载完成标志), 未加载则先补调 q().y()(发起 2016008
                     // 网络拉取), 完成后 g0() 原逻辑发的请求自然拿到数据; 若响应尚未返回
                     // 本次仍可能空, 用户下拉刷新可重拉。y() 自身幂等(a 标志重置+重新
                     // 请求), 重复调用无害。
-                    // 内存管理类名随版本轮换(22.11=glb/22.12=rmb/22.13=nmb/22.14=fob,
-                    // 四版本方法形态逐字一致: static q() + boolean z() + void y()),
-                    // 按列表顺序取首个存在的类, 全部漂移时静默放弃(fail-open 无害:
-                    // 最坏回退到宿主原生行为=首进聊天页可能空态, 下拉刷新可恢复)。
+                    // 内存管理类名随版本轮换(22.11=glb/22.12=rmb/22.13=nmb/22.14=fob/
+                    // 22.15=gpb, 方法形态逐字一致: static q() + boolean z() + void y(),
+                    // 且都引用 2016008), 按列表顺序取首个通过形状校验的类——仅类存在
+                    // 不够: 22.15 的 fob 同名异义为 IM 消息转换器 abstract 类(无 q/z/y),
+                    // 直接命中会 NoSuchMethodError 被吞、兜底静默失效(2026-11-25 真机
+                    // "频道不显示"回归实证), 故必须校验 q/z/y 三方法齐全。
+                    // 全部漂移时静默放弃(fail-open 无害: 最坏回退到宿主原生行为=首进
+                    // 聊天页可能空态, 下拉刷新可恢复)。
                     // g0 为混淆名, 按形状定位: 无参 void + 体内含 RequestMemoryListMessage
                     // 构造(字符串不可查, 用"仅有一个无参 void 方法且类名精确匹配"约束;
-                    // 四版本 g0() 均在且同名, 形状稳定)
+                    // 五版本 g0() 均在且同名, 形状稳定)
                     runCatching {
                         val chatViewClass = findClass(
                             "com.baidu.tieba.immessagecenter.msgtab.ui.view.MsgChatCenterSliceView"
@@ -428,12 +434,27 @@ class FragmentTab : XposedContext(), IHooker, Obfuscated {
                             hookBeforeMethod(g0Method) { _ ->
                                 runCatching {
                                     val memoryClass = listOf(
-                                        "com.baidu.tieba.fob", "com.baidu.tieba.nmb",
-                                        "com.baidu.tieba.rmb", "com.baidu.tieba.glb"
+                                        "com.baidu.tieba.gpb", "com.baidu.tieba.fob",
+                                        "com.baidu.tieba.nmb", "com.baidu.tieba.rmb",
+                                        "com.baidu.tieba.glb"
                                     ).firstOrNull { name ->
                                         runCatching {
-                                            findClass(name)
-                                            true
+                                            val c = findClass(name)
+                                            // 形状校验: q()静态 + z()无参boolean + y()无参void
+                                            // 三方法齐全才算内存管理类(22.15 的 fob 同名异义
+                                            // 类无此形状, 自动排除)
+                                            c.declaredMethods.any { m ->
+                                                java.lang.reflect.Modifier.isStatic(m.modifiers) &&
+                                                    m.name == "q" && m.parameterTypes.isEmpty()
+                                            } &&
+                                                c.declaredMethods.any { m ->
+                                                    m.name == "z" && m.parameterTypes.isEmpty() &&
+                                                        m.returnType == Boolean::class.javaPrimitiveType
+                                                } &&
+                                                c.declaredMethods.any { m ->
+                                                    m.name == "y" && m.parameterTypes.isEmpty() &&
+                                                        m.returnType == Void.TYPE
+                                                }
                                         }.getOrDefault(false)
                                     } ?: return@hookBeforeMethod
                                     val singleton = XposedHelpers.callStaticMethod(

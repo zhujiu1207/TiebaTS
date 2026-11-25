@@ -30,6 +30,14 @@
     // 桥接包装层引用与世代漂移检测(见 bridgeListenerDrift)
     var bridgeWrapRef = null;
     var bridgeTbi = null;
+    // 首屏补发只发一次: 拆桥重建不重发——重建循环里每次补发=一次程序化点击=
+    // 一次 reload(既覆盖用户刚选的 tab 语义, 又令 H5 短暂无响应)。
+    // 2026-11-25 真机回归(字体变大+点不动几秒后恢复)的机制之一
+    var bridgeRefreshDone = false;
+    // 漂移连续计数: 应用挂载期会瞬时增删 notify 监听(组件逐个注册), 单次漂移
+    // 即拆桥会进入"拆桥(class 写入解禁)→重建(补发点击)→应用再重挂"的 2s 循环,
+    // 连续两轮漂移才认定世代真的更替了
+    var driftStrikes = 0;
 
     var userInteracted = false;
     // 当前应高亮的 tab: 'early' | 'latest'(默认"最早", 与原生默认激活态一致)
@@ -267,12 +275,22 @@
     // 请求走应用自己的代码路径, 保证打开浮层即为"最早"序; 若首屏请求尚未
     // 发出, 本次点击与首屏的两次响应都会被包装层按当前语义(默认最早=升序)
     // 重排, 结果一致。找不到按钮(极早期/结构漂移)时静默跳过——首屏保持
-    // 服务端默认序, 仅失去自动升序, 用户点 tab 仍可用
+    // 服务端默认序, 仅失去自动升序, 用户点 tab 仍可用。
+    // 150ms 固定延时的真实语义(2026-11-25 真机"先改名后归位"感知归因):
+    // 点早于 tab 行渲染会空转浪费唯一一次补发, 点晚则用户先看到胶囊压在
+    // 改名后的"最晚"位再跳走——这里改为"桥接就绪后持续探测 tab 出现,
+    // 出现即点", 把补发点击从固定 150ms 收敛到"tab 可点的最早时刻"
     function bridgeSupplementalRefresh() {
-        try {
-            var tabs = getTabs();
-            if (tabs && tabs.early) { tabs.early.click(); }
-        } catch (e) { }
+        var n = 0;
+        var timer = setInterval(function () {
+            n++;
+            var clicked = false;
+            try {
+                var tabs = getTabs();
+                if (tabs && tabs.early) { tabs.early.click(); clicked = true; }
+            } catch (e) { clicked = true; }
+            if (clicked || n >= 20) { clearInterval(timer); }
+        }, 100);
     }
 
     // 拿页面事件总线: webpack 5 运行时把模块注册表挂在 webpackChunk* 数组上,
@@ -428,8 +446,14 @@
             bridgeWrapRef = wrap;
             bridgeMode = true;
             // 首屏补发(程序化点击, 见 bridgeSupplementalRefresh): 请求由应用
-            // 自构, 响应经包装层按默认"最早"序重排
-            setTimeout(bridgeSupplementalRefresh, 150);
+            // 自构, 响应经包装层按默认"最早"序重排。只发一次: 漂移拆桥重建
+            // 不重发——重建循环里每次补发=一次 reload(H5 短暂无响应, 真机
+            // 表现"点不动")+一次幽灵点击覆盖用户刚选的 tab(2026-11-25 真机
+            // 回归实证), 首发已保证过升序, 重建后由包装层按 selectedTab 重排
+            if (!bridgeRefreshDone) {
+                bridgeRefreshDone = true;
+                bridgeSupplementalRefresh();
+            }
         } catch (e) {
             // 结构性失败(找不到 chunk 数组/require 异常等): 放弃桥接,
             // 按钮退化为原生语义, 不影响宿主
@@ -455,9 +479,13 @@
     // 仅服务 Vue2 本地排序路径; 桥接模式高亮完全交还原生——胶囊的
     // "消失-回弹"动画是宿主 H5 自带行为(模块关/开表现一致, 实机对照),
     // 原生点击后自会回到被点按钮上, 脚本写 class 只会与 Vue 重渲染
-    // 竞争引入额外闪烁(2026-11-22 实机验证后拆除整套 pill 保持机制)
+    // 竞争引入额外闪烁(2026-11-22 实机验证后拆除整套 pill 保持机制)。
+    // Vue3 页面(桥接宿主)必须直退: Vue2 探测失败≠可写 class——桥接未建立
+    // 的窗口期(初始化失败/漂移拆桥后)落到这里时, 本函数是唯一仍在写
+    // class 的路径, 与 Vue 重渲染竞争产生胶囊抖动/字号异常(2026-11-25
+    // 真机"字体变大"回归的机制之一, 与 2026-11-22 拆 pill 机制同一教训)
     function applyTabStyle() {
-        if (bridgeMode) { return; }
+        if (bridgeMode || !findLzlVm()) { return; }
         try {
             var tabs = getTabs();
             if (!tabs) { return; }
@@ -492,6 +520,31 @@
             applyTabStyle();
         }, 200);
     }
+
+    // 浮层首开的"原生 tab 闪现"收敛(2026-11-25 真机反馈: 打开楼中楼先看到
+    // "热门|最早", 改名后胶囊还在原"最早"位, 补发点击后才跳到左侧"最早"):
+    // 注入点(onPageFinished)只跑一次, 此刻 H5 往往还没渲染出 tab 行——首屏
+    // 的改名此前完全依赖 observer(200ms 防抖)/轮询(2s)兜出, 原生组合裸奔
+    // 可见近一帧。这里用短周期 MutationObserver 等待: tab 一出现立即改名,
+    // 把"原生组合可见窗口"从一帧压到改名单次执行的耗时; 30 次上限是防御
+    // (极慢页面 6s 后交还给常规 observer/轮询节奏)。立即改名不等于立即归位:
+    // 胶囊归位仍等首屏补发点击(链路见 bridgeSupplementalRefresh), 这是把
+    // 裸奔窗口从"文本+胶囊都错"压到"只胶囊暂位"
+    function watchFirstTabs() {
+        var n = 0;
+        var timer = setInterval(function () {
+            n++;
+            var done = false;
+            try {
+                if (lzlUiExists()) {
+                    renameTabs();
+                    done = resolveTabs() != null;
+                }
+            } catch (e) { done = true; }
+            if (done || n >= 30) { clearInterval(timer); }
+        }, 200);
+    }
+    try { watchFirstTabs(); } catch (e) { }
 
     try {
         if (window.MutationObserver && document.body) {
@@ -626,13 +679,21 @@
         }
         if (bridgeMode && bridgeListenerDrift()) {
             // 监听表被应用重挂/新增监听: 旧快照 originals 已成僵尸、新监听器
-            // 不经 wrapper(其响应不再重排)。拆桥复位重试状态, 落到下方
-            // Vue2 探测路径(Vue3 页面 findLzlVm 仍为 null)立即按新一代
-            // 监听器重建包装
-            bridgeMode = false;
-            bridgeStopped = false;
-            bridgeChunkAttempts = 0;
-            bridgeListenerAttempts = 0;
+            // 不经 wrapper(其响应不再重排)。但应用挂载期会瞬时增删监听
+            // (组件逐个注册/重挂), 单次漂移就拆桥会进入"拆桥→重建→再重挂"
+            // 的 2s 循环——每轮循环都伴随一次补发点击(=reload)与一次 class
+            // 写入窗口, 即真机"点不动几秒+字体变大"(2026-11-25 实证)。
+            // 连续两轮漂移才认定世代真的更替, 拆桥重建; 首轮漂移只记录,
+            // 旧包装的世代校验(见 wrap)已保证僵尸监听器不会误分发
+            if (++driftStrikes >= 2) {
+                driftStrikes = 0;
+                bridgeMode = false;
+                bridgeStopped = false;
+                bridgeChunkAttempts = 0;
+                bridgeListenerAttempts = 0;
+            }
+        } else {
+            driftStrikes = 0;
         }
         if (bridgeMode) {
             // 桥接模式: 数据在响应层重排, 高亮完全交还原生(见 applyTabStyle

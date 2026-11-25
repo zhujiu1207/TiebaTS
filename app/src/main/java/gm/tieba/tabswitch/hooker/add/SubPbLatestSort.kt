@@ -9,7 +9,7 @@ import gm.tieba.tabswitch.hooker.IHooker
 import gm.tieba.tabswitch.util.getAssetFileContent
 
 /**
- * 楼中楼时间序更改
+ * 楼中楼时间排序更改
  *
  * 楼中楼浮层(NewSubPbActivity, H5 hybrid)原生有"热门/最早"两个排序按钮.
  * 通过向楼中楼 WebView 注入 JS: 把"热门"改名为"最早"、"最早"改名为"最晚",

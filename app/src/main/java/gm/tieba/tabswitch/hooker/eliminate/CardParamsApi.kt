@@ -12,18 +12,21 @@ import java.lang.reflect.Method
  * businessInfo 槽位永久读空（heatTopic 判定随之退化）。
  * 22.13.1.1 轮换: us9→lt9(卡片数据基类, c() 返回 qi9), zh9→qi9, mr9→ds9;
  * 22.14.1.0 轮换: lt9→wt9(c() 返回 zi9, 方法布局完全同构), 持有者兜底
- * qi9→zi9。22.13 的 mr9/rg9/zh9 与 22.14 的 lt9/mr9/qi9/rg9 均是同名异义类,
- * us9/zh9 在 22.14 已移除, 靠返回类型校验自动排除。
+ * qi9→zi9; 22.15.1.1 轮换: wt9→vu9(c() 返回 yj9, 方法布局完全同构),
+ * 持有者 zi9→yj9(无参 Map a() 同构)。22.13 的 mr9/rg9/zh9 与 22.14 的
+ * lt9/mr9/qi9/rg9 均是同名异义类, 22.15 的 wt9 是 boolean a(String) 工具类、
+ * qi9/zi9/us9 已移除, 靠返回类型校验自动排除。
  * FollowFilter 与 HotPostFilter 共用, 解析结果进程级缓存。
  */
 object CardParamsApi : XposedContext() {
 
     private val PARAM_CANDIDATES = arrayOf(
-        "com.baidu.tieba.wt9", "com.baidu.tieba.lt9", "com.baidu.tieba.us9",
-        "com.baidu.tieba.mr9"
+        "com.baidu.tieba.vu9", "com.baidu.tieba.wt9", "com.baidu.tieba.lt9",
+        "com.baidu.tieba.us9", "com.baidu.tieba.mr9"
     )
     private val HOLDER_CANDIDATES = arrayOf(
-        "com.baidu.tieba.qi9", "com.baidu.tieba.zh9", "com.baidu.tieba.rg9",
+        "com.baidu.tieba.yj9", "com.baidu.tieba.qi9", "com.baidu.tieba.zh9",
+        "com.baidu.tieba.rg9",
         // zi9 只能垫底: 22.11 宿主的同名 zi9 是卡片处理器注册表(静态 HashMap<String,nl9>,
         // a() 返回该 Map), 排在旧名前面时, 22.11 上载体解析一旦失败走兜底会误绑它
         "com.baidu.tieba.zi9"
@@ -77,7 +80,8 @@ object CardParamsApi : XposedContext() {
     }
 
     // holder 的 a() 必须返回 Map。参数载体的 c() 返回类型即持有者类
-    // (22.11/22.12 实测 mr9.c()→rg9 / us9.c()→zh9, 22.13 实测 lt9.c()→qi9, rg9/qi9.a()→Map)，
+    // (22.11/22.12 实测 mr9.c()→rg9 / us9.c()→zh9, 22.13 实测 lt9.c()→qi9,
+    //  22.14 实测 wt9.c()→zi9, 22.15 实测 vu9.c()→yj9, rg9/qi9/zi9/yj9.a()→Map)，
     // 不依赖候选名；载体未解析成功时才按候选名兜底，同样校验返回类型
     private fun resolveHolderMethod(): Method? {
         val fromCarrier = cMethod?.let { c ->

@@ -27,7 +27,7 @@ class HomeFeedFilter : XposedContext(), IHooker {
 
     // 拆卡参数 Map 后按 key 取值比较, 不对 Map.toString() 做 contains——那是无边界子串
     // 匹配, Map 内任意 value 恰好含该字面量时也会误判。
-    // 参数 Map 读取走 CardParamsApi 共享通道(f(), 22.14=wt9): 与 HotPostFilter/
+    // 参数 Map 读取走 CardParamsApi 共享通道(f(), 22.14=wt9, 22.15=vu9): 与 HotPostFilter/
     // FollowFilter 同源, 带返回类型校验+候选轮换+失败留痕+per-pass memo。
     // 此前直取混淆字段名 "c"(22.14 实证 wt9.c 即 f() 返回的同一 Map), 字段名一但
     // 随版本轮换即静默失效且无任何日志, 故收编进共享解析体系。

@@ -8,10 +8,12 @@ import java.lang.reflect.Modifier
 /**
  * 首页模板卡数据项接口的共享解析, b()=卡片键, d()=载荷。
  * 接口名随宿主版本轮换, 按"同时存在零参 b()/d()"逐候选探测:
- * 22.12 为 nt9, 22.13.1.1 为 eu9, 22.14.1.0 起为 pu9(方法布局同构,
- * b()/d() 不变), 其余候选是同名异义类/旧名(如 22.12 的 eu9 是三参
+ * 22.12 为 nt9, 22.13.1.1 为 eu9, 22.14.1.0 为 pu9, 22.15.1.1 起为
+ * ov9(方法布局同构, b()/d() 不变, 全量约 7900 实现类同代);
+ * 其余候选是同名异义类/旧名(如 22.12 的 eu9 是三参
  * a(View,nt9,int) 点击绑定器、fs9 是 void a(Map) 接口、22.14 的 eu9
- * 是 setOnTemplateClickListener 接口), 因无零参 b() 或类缺失自动
+ * 是 setOnTemplateClickListener 接口、22.15 的 pu9 是 ViewOutlineProvider
+ * 实现类、22.15 的 nt9 是卡频控类), 因无零参 b() 或类缺失自动
  * 跳过不会误绑。均失败时置 resolved 停止重试
  * (避免 7 个 PostFilter 在热路径反复构造异常)。
  * b() 必须返回 String: 防止同名异义类(方法重载/语义不同)被绑为卡片键
@@ -19,8 +21,8 @@ import java.lang.reflect.Modifier
 object Fs9Api : XposedContext() {
 
     private val INTERFACE_CANDIDATES = arrayOf(
-        "com.baidu.tieba.pu9", "com.baidu.tieba.eu9", "com.baidu.tieba.nt9",
-        "com.baidu.tieba.fs9"
+        "com.baidu.tieba.ov9", "com.baidu.tieba.pu9", "com.baidu.tieba.eu9",
+        "com.baidu.tieba.nt9", "com.baidu.tieba.fs9"
     )
 
     @Volatile

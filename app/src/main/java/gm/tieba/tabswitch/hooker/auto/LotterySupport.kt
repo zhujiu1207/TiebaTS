@@ -33,6 +33,7 @@ internal const val LOTTERY_GROUP_ASSISTANT_PORTRAIT_HASH = "tb.1.d7085e15."
 // 旁路（实测多播里只有别人的消息），拉历史是核查阶段拿到自己回复的唯一来源；
 // 曾据单次探测误判"恒返回空"——实际是回调常先回空包、数据随后才到。
 // 类名随版本轮换: 12.74=cn6 / 12.63=f96 / 22.12=k57 / 22.13=v57 / 22.14=w57
+// (22.15 核对 w57 未漂移, 仍为 ImTmpBridge$ImMemoryCacheManager 包装器)
 // (i(Context,long,…,回调接口) 8 参过滤器即插即用, 新名在前)
 internal val LOTTERY_FETCH_WRAPPERS = listOf(
     "com.baidu.tieba.w57", "com.baidu.tieba.v57", "com.baidu.tieba.k57",

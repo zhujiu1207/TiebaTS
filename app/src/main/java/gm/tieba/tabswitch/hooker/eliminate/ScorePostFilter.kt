@@ -6,8 +6,8 @@ import gm.tieba.tabswitch.hooker.IHooker
 // 屏蔽首页打分贴("打分"标签+偶像/角色评分卡的帖子):
 // 22.11 打分内容为 ComponentFactory 的 feed_score 组件(tbclient.FeedScoreComponent),
 // 以内层分段卡形态挂在普通帖(common_card 合成卡)里, 分段数据类
-// com.baidu.tieba.mc9(22.13=dd9, 22.14=id9) implements 卡片接口
-// (22.12=nt9, 22.13=eu9, 22.14=pu9),
+// com.baidu.tieba.mc9(22.13=dd9, 22.14=id9, 22.15=he9) implements 卡片接口
+// (22.12=nt9, 22.13=eu9, 22.14=pu9, 22.15=ov9),
 // b() 返回 "feed_score" (与地雷商品卡返回 "feed_landmine_goods" 同构)。
 // 与 GoodsPostFilter 相同的两级拦截(共享脚手架见 Fs9Api.filterTemplateList):
 // - 外层列表: 合成卡载荷内嵌打分分段卡命中则整帖移除;

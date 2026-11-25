@@ -28,6 +28,7 @@ import gm.tieba.tabswitch.dao.Preferences.putEULAAccepted
 import gm.tieba.tabswitch.hooker.TSPreferenceHelper.PreferenceLayout
 import gm.tieba.tabswitch.hooker.TSPreferenceHelper.SwitchButtonHolder
 import gm.tieba.tabswitch.hooker.TSPreferenceHelper.createButton
+import gm.tieba.tabswitch.hooker.add.ThreadSnapshot
 import gm.tieba.tabswitch.hooker.deobfuscation.DeobfuscationHelper.getTbVersion
 import gm.tieba.tabswitch.hooker.deobfuscation.Matcher
 import gm.tieba.tabswitch.hooker.eliminate.CommentToolbar
@@ -454,7 +455,7 @@ class TSPreference : XposedContext(), IHooker, Obfuscated {
             try {
                 activity.startActivity(Intent().apply {
                     setAction("android.intent.action.VIEW")
-                    setData(Uri.parse("https://t.me/+S93Y8WbDEwczYjU1"))
+                    setData(Uri.parse("https://t.me/+hA4cxr3IA6NhYWI1"))
                 })
             } catch (tr: Throwable) {
                 // 无浏览器等场景降级提示, 不击穿点击监听
@@ -590,9 +591,25 @@ class TSPreference : XposedContext(), IHooker, Obfuscated {
         preferenceLayout.addView(originSrcButton)
         preferenceLayout.addView(originSrcOnlyWifiButton)
 
+        // 帖子浏览缓存: 开启时弹数量配置弹窗(自动保存帖数 1~1000, 保存即实时生效),
+        // 关闭直接关闭。hooker 按 thread_snapshot 键注册(activeHookerKeys),
+        // 注册时 hook() 已把存储层容量对齐为设置值
+        val threadSnapshot = SwitchButtonHolder(activity, "帖子浏览缓存", "thread_snapshot", SwitchButtonHolder.TYPE_SWITCH)
+        threadSnapshot.setOnButtonClickListener { _ ->
+            if (!getBoolean("thread_snapshot")) {
+                ThreadSnapshot.Ui.showConfigDialog(activity) { _ ->
+                    // 同自动签到确认弹窗路径: 反射漂移时降级提示, 不击穿宿主主线程
+                    threadSnapshot.turnSafely(true, toastOnFailure = false)
+                }
+            } else {
+                threadSnapshot.turnSafely()
+            }
+        }
+        preferenceLayout.addView(threadSnapshot)
+
         preferenceLayout.addView(SwitchButtonHolder(activity, "浏览历史增加搜索", "history_cache", SwitchButtonHolder.TYPE_SWITCH))
         preferenceLayout.addView(SwitchButtonHolder(activity, "长按下载保存全部图片", "save_images", SwitchButtonHolder.TYPE_SWITCH))
-        preferenceLayout.addView(SwitchButtonHolder(activity, "楼中楼时间序更改", "sub_pb_latest_sort", SwitchButtonHolder.TYPE_SWITCH))
+        preferenceLayout.addView(SwitchButtonHolder(activity, "楼中楼时间排序更改", "sub_pb_latest_sort", SwitchButtonHolder.TYPE_SWITCH))
         preferenceLayout.addView(SwitchButtonHolder(activity, "弹窗自由复制", "select_clipboard", SwitchButtonHolder.TYPE_SWITCH))
 
         preferenceLayout.addView(SwitchButtonHolder(activity, "隐藏小红点", "red_tip", SwitchButtonHolder.TYPE_SWITCH))

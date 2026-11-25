@@ -61,12 +61,18 @@ class FoldTopCardView : XposedContext(), IHooker {
         const val TERMINAL_STATE_RECHECK_MS = 32L
         const val NATIVE_STATE_TIMEOUT_MS = 2_000L
 
-        // 导航栏透明度联动入口按宿主版本轮换(2026-11-13 四版逐一核对):
-        // 门面类.j(activity) 返回 NavigationBarController, 其(float) 方法把
-        // 标题栏背景/图标/吧名/文字整体渐变到给定透明度。仅 22.14 门面类是
-        // x7a——22.13 及以下 x7a 是不相干的 PopInfo 配置类, 反射会命中错误
-        // 签名, 必须按版本取表。
+        // 导航栏透明度联动入口按宿主版本轮换(2026-11-13 四版逐一核对,
+        // 2026-11-25 补 22.15):
+        // 门面类.j(activity) 返回 NavigationBarController, 其 f2(float) 方法把
+        // 标题栏背景/图标/吧名/文字整体渐变到给定透明度。22.14 门面类是
+        // x7a、22.15 起是 w8a(方法布局同构, NavigationBarController.f2(float)
+        // 本体未漂移, 体内 forumIcon/forumName/barBgView.setAlpha 逐字一致)——
+        // 22.13 及以下 x7a 是不相干的 PopInfo 配置类, 反射会命中
+        // 错误签名, 必须按版本取表。
+        // 三元组第二元素 = 控制器上的 alpha 方法名(非门面方法名; 门面 j 由
+        // 消费侧按"返回类型上存在该 alpha 方法"自动选出)
         val NAV_ALPHA_ROUTES: List<Triple<String, String, String>> = listOf(
+            Triple("com.baidu.tieba.w8a", "f2", "22.15.0.0"),
             Triple("com.baidu.tieba.x7a", "f2", "22.14.0.0"),
             Triple("com.baidu.tieba.c7a", "X1", "22.13.0.0"),
             Triple("com.baidu.tieba.n6a", "e2", "22.12.0.0"),
