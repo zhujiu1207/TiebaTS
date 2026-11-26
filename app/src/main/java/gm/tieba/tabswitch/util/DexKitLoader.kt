@@ -146,8 +146,8 @@ object DexKitLoader : XposedContext() {
             sawApk = true
             try {
                 ZipFile(apk).use { zip ->
-                    // ABI 候选按进程位宽排序(与 XposedContext.load 同口径): 32 位进程
-                    // 加载 arm64 so 报 "is 64-bit instead of 32-bit", 必须 v7a 优先
+                    // ABI 候选与 XposedContext.load 同口径(设备表原序): 单 arm64 打包下
+                    // 仅 arm64 条目命中, 32 位进程在此路径的失败如实归入 errors
                     for (abi in abiCandidates()) {
                         val entry = zip.getEntry("lib/$abi/$LIBRARY_FILE_NAME") ?: continue
                         System.load(extractEntry(context, apk, zip, entry, abi).absolutePath)
@@ -164,8 +164,8 @@ object DexKitLoader : XposedContext() {
         return false
     }
 
-    // 进程位宽对应的 ABI 候选序: 与 XposedContext.abiCandidates 同口径(单点事实源
-    // 放 XposedContext, 此处引用避免两处漂移)
+    // ABI 候选序: 与 XposedContext.load 同口径(单点事实源放 XposedContext, 此处
+    // 引用避免两处漂移)。32 位位宽分型已随双 ABI 移除(2026-11-25), 列表即设备表
     private fun abiCandidates(): List<String> = XposedContext.abiCandidatesForCurrentProcess()
 
     /** 模块 APK 候选路径: sPath(框架提供的模块路径) + 包管理器解析的 sourceDir/split。 */

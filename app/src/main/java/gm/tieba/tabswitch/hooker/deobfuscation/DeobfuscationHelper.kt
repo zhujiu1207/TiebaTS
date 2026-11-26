@@ -5,7 +5,9 @@ import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import gm.tieba.tabswitch.bridge.XposedBridge
+import gm.tieba.tabswitch.XposedContext
 import gm.tieba.tabswitch.BuildConfig
+import gm.tieba.tabswitch.bridge.XposedHelpers
 import gm.tieba.tabswitch.logBoth
 import gm.tieba.tabswitch.dao.AcRules
 import gm.tieba.tabswitch.dao.Preferences.getSignature
@@ -26,6 +28,12 @@ object DeobfuscationHelper {
     private const val SIGNATURE_DATA_START_OFFSET = 32
     private const val SIGNATURE_SIZE = 20
     private val DEX_ENTRY = Regex("""classes(\d*)?\.dex""")
+
+    // 规则内容抽样验证的样本量: 全表约 50 条, 抽 8 条的漏检概率对"个别脏规则"
+    // 是可接受的(脏规则由 hooker 消费侧逐条隔离兜底), 验证本身只在"跳过重建"
+    // 捷径前跑一次, 8 次 ClassLoader 查找约毫秒级
+    private const val SAMPLE_SIZE = 8
+
     lateinit var sCurrentTbVersion: String
 
     fun calcSignature(dataStoreInput: InputStream): ByteArray {
@@ -155,7 +163,38 @@ object DeobfuscationHelper {
         val expected = getRuleCount(context)
         val actual = AcRules.countAll()
         // 旧版本未记录预期条数: 降级为"非空即通过", 只拦截库被清空的场景
-        return if (expected < 0) actual > 0 else actual == expected
+        if (if (expected < 0) actual > 0 else actual == expected) {
+            // 条数完整再验内容: 抽样规则的 class 必须能在宿主 ClassLoader 里加载、
+            // method 必须在该类(含父类)上真实存在——拦"条数对但内容错"(特征歧义
+            // 写入错误目标/历史脏规则)。类加载失败不判无效: 宿主 dex 校验已保证
+            // 签名一致, 类缺失只可能是抽样抽到了版本门槛外的旧规则, 属正常降级
+            // (findMissing 会在主流程逐条隔离), 不作为重建触发条件
+            val broken = runCatching { sampleBrokenRules() }.getOrNull()
+            if (broken != null && broken > 0) {
+                logBoth("规则库内容抽样异常: $broken 条规则的定位目标不存在")
+                return false
+            }
+            return true
+        }
+        return false
+    }
+
+    // 抽样验证规则内容: 类可加载时核对其方法存在性(按名不按签名——规则的 method
+    // 就是裸方法名, hooker 消费侧按名+参数形状自行过滤, 这里同口径)。验证失败
+    // (sClassLoader 未初始化等)抛给调用方 runCatching, 按"无法验证"处理放行
+    private fun sampleBrokenRules(): Int {
+        val sampled = AcRules.sampleRules(SAMPLE_SIZE)
+        var broken = 0
+        for (rule in sampled) {
+            val valid = runCatching {
+                val clazz = XposedHelpers.findClassIfExists(rule.clazz, XposedContext.sClassLoader)
+                    ?: return@runCatching null // 类不存在: 版本门槛外的旧规则, 不算内容错
+                clazz.declaredMethods.any { it.name == rule.method } ||
+                    clazz.methods.any { it.name == rule.method }
+            }.getOrNull()
+            if (valid == false) broken++
+        }
+        return broken
     }
 
     // 反混淆关键事件记录(与日志开关无关, 与失败计数同类): 开始/跳过/自愈/成败

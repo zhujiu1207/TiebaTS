@@ -135,4 +135,33 @@ object AcRules {
         val found = loadMatch(matchers).mapTo(HashSet()) { it.matcher }
         return matchers.filter { it !in found }
     }
+
+    // 规则内容抽样: 均匀取全表 id 对齐的 n 条(id 取模步进), 供"规则内容有效性"
+    // 验证——条数完整性(isRuleStoreIntact)只拦"库被清空/写入中断", 拦不住
+    // "条数对但内容错"(特征歧义写入错误方法/脏数据)。抽样返回 ≤n 条(库不足 n 时全取),
+    // 随机性用 id 对齐而非 ORDER BY RANDOM: 全表排序代价 O(n log n), 步进 O(n) 且
+    // 分布等价(本表 id 连续无空洞——单事务批量写入, AUTOINCREMENT 无删除路径)
+    fun sampleRules(n: Int): List<AcRule> {
+        if (n <= 0) return emptyList()
+        val total = countAll()
+        if (total <= 0) return emptyList()
+        val step = maxOf(1, total / n)
+        val out = ArrayList<AcRule>(n)
+        db.rawQuery(
+            "SELECT `id`,`matcher`,`class`,`method` FROM `AcRule` WHERE (`id` % ?) = 1 LIMIT ?",
+            arrayOf(step.toString(), n.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                out.add(
+                    AcRule(
+                        cursor.getInt(cursor.getColumnIndexOrThrow("id")),
+                        cursor.getString(cursor.getColumnIndexOrThrow("matcher")),
+                        cursor.getString(cursor.getColumnIndexOrThrow("class")),
+                        cursor.getString(cursor.getColumnIndexOrThrow("method"))
+                    )
+                )
+            }
+        }
+        return out
+    }
 }

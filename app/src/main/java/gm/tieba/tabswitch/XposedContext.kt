@@ -38,23 +38,18 @@ abstract class XposedContext {
             sHandler = Handler(Looper.getMainLooper())
         }
 
-        // 进程位宽对应的 ABI 候选序: dlopen 按进程位宽校验 ELF, 32 位进程加载
-        // arm64 so 报 "is 64-bit instead of 32-bit"(2026-11-25 vivo 真机 LSPatch
-        // 环境实证——设备 SUPPORTED_ABIS 只报 arm64-v8a, 但宿主进程 64bit=false,
-        // 模块此前单 arm64 打包时反混淆在该环境必败)。64 位进程保持设备表原序;
-        // 32 位进程把 armeabi-v7a 提到最前(模块双 ABI 打包后 v7a 条目存在)
+        // 加载顺序兜底: 设备支持的 ABI 依序尝试。双 ABI 打包(32 位宿主兼容)曾于
+        // 2026-11-25 恢复过一天后整体移除(v7a 的 libhide/libcheck 产物未经真机
+        // 32 位进程验证, 用户真机暴露闪退), 候选遍历结构保留: 单 ABI 打包时列表
+        // 退化为单条, 行为与直接单路径加载等价, suppressed 链仍完整可排查
         @JvmStatic
-        fun abiCandidatesForCurrentProcess(): List<String> {
-            val abis = Build.SUPPORTED_ABIS
-            return if (android.os.Process.is64Bit()) abis.toList()
-            else listOf("armeabi-v7a") + abis.filter { it != "armeabi-v7a" }
-        }
+        fun abiCandidatesForCurrentProcess(): List<String> = Build.SUPPORTED_ABIS.toList()
 
         @JvmStatic
         protected fun load(filename: String) {
-            // 遍历 ABI 候选(按进程位宽排序, 见 abiCandidatesForCurrentProcess)依次尝试:
-            // 32 位进程首位 v7a, 64 位进程首位 arm64; 不匹配位宽的条目以
-            // UnsatisfiedLinkError 归入 errors 继续下一候选
+            // 遍历设备 ABI 候选依次尝试(当前单 arm64 打包, 首位即命中); 不匹配
+            // 位宽/缺失条目的失败以 UnsatisfiedLinkError 归入 errors 继续下一候选,
+            // 全败时 suppressed 链完整落盘供排查
             val soPaths = abiCandidatesForCurrentProcess().map { abi -> "$sPath!/lib/$abi/lib$filename.so" }
             val errors = mutableListOf<Throwable>()
 
