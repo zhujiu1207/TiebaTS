@@ -9,6 +9,7 @@ import gm.tieba.tabswitch.bridge.XC_MethodHook
 import gm.tieba.tabswitch.bridge.XC_MethodHook.XC_MethodReplacement
 import gm.tieba.tabswitch.bridge.XposedBridge
 import gm.tieba.tabswitch.bridge.XposedHelpers
+import gm.tieba.tabswitch.util.HookErrorRateLimiter
 import gm.tieba.tabswitch.util.Logger
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
@@ -80,35 +81,12 @@ abstract class XposedContext {
         // replace 异常被 bridge 的 before 拦截层吞掉后回退执行宿主原方法(与旧版
         // Xposed 行为一致), 并不会向宿主调用方传播——replace 钩子不要依赖异常
         // 传播实现兜底, 失败路径须在回调体内自行处理。
-        // 异常限流: 按 key(阶段+异常类) 记录最近落盘时间, 60s 内同 key 只记一次。
-        // key 不含 message: 动态 message(携带解析值/索引/时间戳)会让每次调用都成为
-        // 新 key, 60s 限流被完全击穿成刷屏。单槽"仅比对上一条"去重会被交替异常击穿,
-        // 这里用有界 map; 超限按"最旧落盘时间"逐条淘汰而不是整表 clear——
-        // 整表清空会把其他异常的限流窗口连带重置, 让它们也重新放行一轮洪峰
-        private val sHookErrorLogTimes = java.util.concurrent.ConcurrentHashMap<String, Long>()
-        private const val HOOK_ERROR_LOG_INTERVAL_MS = 60_000L
-        private const val HOOK_ERROR_LOG_MAX_KEYS = 64
-
+        // 异常限流: 裁决收编于 HookErrorRateLimiter(与 bridge 侧拦截链共用同一份
+        // "60s 窗口 + 有界 map + 最旧淘汰"实现, 修正只改一处)
         @JvmStatic
         @PublishedApi
         internal fun logHookError(phase: String, tr: Throwable) {
-            val key = phase + ':' + tr.javaClass.name
-            val now = System.currentTimeMillis()
-            val last = sHookErrorLogTimes[key]
-            if (last != null && now - last < HOOK_ERROR_LOG_INTERVAL_MS) return
-            if (sHookErrorLogTimes.size > HOOK_ERROR_LOG_MAX_KEYS) {
-                // 并发下的重复淘汰/漏淘汰均无害, 最多多放行一轮, 下一轮触发再补
-                var oldestKey: String? = null
-                var oldestAt = Long.MAX_VALUE
-                for ((k, t) in sHookErrorLogTimes) {
-                    if (t < oldestAt) {
-                        oldestAt = t
-                        oldestKey = k
-                    }
-                }
-                if (oldestKey != null) sHookErrorLogTimes.remove(oldestKey)
-            }
-            sHookErrorLogTimes[key] = now
+            if (!HookErrorRateLimiter.shouldLog(phase, tr)) return
             Logger.log("hook 回调异常($phase): ${tr.javaClass.name}: ${tr.message}")
             Logger.log(tr)
         }

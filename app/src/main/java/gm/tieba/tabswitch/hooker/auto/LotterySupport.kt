@@ -131,3 +131,35 @@ internal fun lotteryNormalizeMsgTime(raw: Long): Long {
     if (raw <= 0) return 0L
     return if (raw > 100_000_000_000L) raw else raw * 1000L
 }
+
+// 当前登录账号 uid 候选（免打扰/时间戳修复按账号隔离场景与频道列表共用）。
+// uid 会拼进 "tb_group_chat_room_$uid" 的 SQL, 必须校验纯数字（非数字时
+// rawQuery/UPDATE 必抛异常刷日志）——校验逻辑此前在 PoisonGuard 与
+// OneKeyLottery 各持一份约 80% 逐字重复的实现, 收敛于此。
+// 不含数据库目录扫描: 旧账号残留库只对免打扰/修复类场景有意义, 由调用方
+// 按需自行补充（OneKeyLottery 的频道列表明确要求不做目录扫描）
+internal fun lotteryVerifiedAccountUids(logTag: String): List<String> {
+    val candidateUids = mutableListOf<String>()
+    try {
+        // getCurrentAccountId 可能返回 long, 按 Number 兼容取值(as? String 会得到 null)
+        val accountId = gm.tieba.tabswitch.bridge.XposedHelpers.callStaticMethod(
+            gm.tieba.tabswitch.XposedContext.findClass("com.baidu.tbadk.core.TbadkCoreApplication"),
+            "getCurrentAccountId"
+        )
+        val accountIdStr = when (accountId) {
+            is Number -> accountId.toLong().toString().takeIf { it != "0" }
+            is String -> accountId.takeIf { it.isNotEmpty() }
+            else -> null
+        }
+        if (accountIdStr?.matches(Regex("\\d+")) == true) candidateUids.add(accountIdStr)
+    } catch (tr: Throwable) {
+        lotteryTsLog("$logTag 获取账号失败 -- $tr")
+    }
+    try {
+        gm.tieba.tabswitch.dao.Adp.account?.let {
+            if (it.isNotEmpty() && it.matches(Regex("\\d+"))) candidateUids.add(it)
+        }
+    } catch (ignored: Throwable) {
+    }
+    return candidateUids.distinct()
+}

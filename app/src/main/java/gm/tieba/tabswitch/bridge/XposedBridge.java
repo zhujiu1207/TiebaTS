@@ -106,8 +106,8 @@ public final class XposedBridge {
         sModule.set(module);
     }
 
-    @NonNull
-    public static XposedModule requireModule() {
+    // 仅本类 invokeOriginalMethod/install 内部使用; 无外部调用方故不公开
+    private static XposedModule requireModule() {
         XposedModule module = sModule.get();
         if (module == null) {
             throw new IllegalStateException("libxposed module entry is not attached yet");
@@ -356,34 +356,14 @@ public final class XposedBridge {
             return param.getResult();
         }
 
-        // 异常落盘限流: 与 XposedContext.logHookError 的 60s 有界 map 同款。
-        // replace 包装层重抛的异常会落到 before 分支这里, 若无限流, 签名漂移的
-        // 热路径 replace 钩点会在每次宿主回调时刷穿框架日志, 击穿 XposedContext
-        // 侧的限流设计。key 只含阶段+异常类, 不含 message(动态值会击穿限流)
-        private static final java.util.concurrent.ConcurrentHashMap<String, Long> sHookErrorLogTimes =
-                new java.util.concurrent.ConcurrentHashMap<>();
-        private static final long HOOK_ERROR_LOG_INTERVAL_MS = 60_000L;
-        private static final int HOOK_ERROR_LOG_MAX_KEYS = 64;
-
+        // 异常落盘限流: 与 XposedContext.logHookError 共用 HookErrorRateLimiter
+        // (60s 有界 map, 裁决单点)。replace 包装层重抛的异常会落到 before 分支这里,
+        // 若无限流, 签名漂移的热路径 replace 钩点会在每次宿主回调时刷穿框架日志,
+        // 击穿 XposedContext 侧的限流设计。key 只含阶段+异常类, 不含 message(动态
+        // 值会击穿限流)
         private static void logHookError(String phase, Throwable tr) {
             try {
-                String key = phase + ':' + tr.getClass().getName();
-                long now = System.currentTimeMillis();
-                Long last = sHookErrorLogTimes.get(key);
-                if (last != null && now - last < HOOK_ERROR_LOG_INTERVAL_MS) return;
-                if (sHookErrorLogTimes.size() > HOOK_ERROR_LOG_MAX_KEYS) {
-                    // 并发下的重复淘汰/漏淘汰均无害, 最多多放行一轮
-                    String oldestKey = null;
-                    long oldestAt = Long.MAX_VALUE;
-                    for (java.util.Map.Entry<String, Long> e : sHookErrorLogTimes.entrySet()) {
-                        if (e.getValue() < oldestAt) {
-                            oldestAt = e.getValue();
-                            oldestKey = e.getKey();
-                        }
-                    }
-                    if (oldestKey != null) sHookErrorLogTimes.remove(oldestKey);
-                }
-                sHookErrorLogTimes.put(key, now);
+                if (!gm.tieba.tabswitch.util.HookErrorRateLimiter.shouldLog(phase, tr)) return;
                 XposedBridge.log("hook callback " + phase + " failed: " + tr);
             } catch (Throwable ignored) {
             }

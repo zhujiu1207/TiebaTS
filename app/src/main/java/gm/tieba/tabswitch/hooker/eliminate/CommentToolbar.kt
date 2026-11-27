@@ -106,8 +106,8 @@ object CommentToolbar : XposedContext(), IHooker {
             if (value.isEmpty()) {
                 continue
             }
-            val isIconList = value.count { it is View && idOf(it) != null } >= 4
-            if (isIconList && value.size >= 4) {
+            // count>=4 已蕴含 value.size>=4, 冗余的第二个条件不再判定
+            if (value.count { it is View && idOf(it) != null } >= 4) {
                 @Suppress("UNCHECKED_CAST")
                 return value as MutableList<Any>
             }

@@ -76,7 +76,7 @@ object ThreadSnapshotStore {
 
     @Synchronized
     fun put(tid: String, title: String, data: ByteArray) {
-        if (!::db.isInitialized || tid.isEmpty() || data.isEmpty()) return
+        if (!isReady() || tid.isEmpty() || data.isEmpty()) return
         try {
             val now = System.currentTimeMillis()
             db.execSQL(
@@ -92,7 +92,7 @@ object ThreadSnapshotStore {
 
     @Synchronized
     fun get(tid: String): Snapshot? {
-        if (!::db.isInitialized || tid.isEmpty()) return null
+        if (!isReady() || tid.isEmpty()) return null
         return try {
             db.rawQuery(
                 "SELECT `tid`,`title`,`data`,`cached_at`,`size` FROM `ThreadSnapshot` WHERE `tid`=?",
@@ -117,7 +117,7 @@ object ThreadSnapshotStore {
     // 帖子是否存在(回放判定走轻查询, 避免无谓读出整块 BLOB)
     @Synchronized
     fun contains(tid: String): Boolean {
-        if (!::db.isInitialized || tid.isEmpty()) return false
+        if (!isReady() || tid.isEmpty()) return false
         return try {
             db.rawQuery(
                 "SELECT 1 FROM `ThreadSnapshot` WHERE `tid`=? LIMIT 1", arrayOf(tid)
@@ -146,7 +146,7 @@ object ThreadSnapshotStore {
     // 清空全部缓存(功能关闭时调用——"关闭即清缓存"语义, 不留磁盘残留)
     @Synchronized
     fun clearAll() {
-        if (!::db.isInitialized) return
+        if (!isReady()) return
         try {
             db.execSQL("DELETE FROM `ThreadSnapshot`")
         } catch (tr: Throwable) {

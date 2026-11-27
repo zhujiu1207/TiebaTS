@@ -148,22 +148,6 @@ public final class XposedHelpers {
         }
     }
 
-    public static int getStaticIntField(Class<?> clazz, String fieldName) {
-        try {
-            return findField(clazz, fieldName).getInt(null);
-        } catch (Throwable tr) {
-            throw new IllegalStateException("getStaticIntField " + fieldName + " failed", tr);
-        }
-    }
-
-    public static boolean getStaticBooleanField(Class<?> clazz, String fieldName) {
-        try {
-            return findField(clazz, fieldName).getBoolean(null);
-        } catch (Throwable tr) {
-            throw new IllegalStateException("getStaticBooleanField " + fieldName + " failed", tr);
-        }
-    }
-
     public static Object getStaticObjectField(Class<?> clazz, String fieldName) {
         try {
             return findField(clazz, fieldName).get(null);
@@ -179,8 +163,6 @@ public final class XposedHelpers {
             throw new IllegalStateException("setStaticBooleanField " + fieldName + " failed", tr);
         }
     }
-
-    // ----------------------------------------------------------------- method
 
     /**
      * 旧版 {@code findMethodExact}：参数类型接受 {@link Class} 或 {@link String}（类名）。

@@ -1,6 +1,5 @@
 package gm.tieba.tabswitch.hooker.deobfuscation
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
@@ -10,6 +9,7 @@ import gm.tieba.tabswitch.BuildConfig
 import gm.tieba.tabswitch.bridge.XposedHelpers
 import gm.tieba.tabswitch.logBoth
 import gm.tieba.tabswitch.dao.AcRules
+import gm.tieba.tabswitch.dao.Preferences
 import gm.tieba.tabswitch.dao.Preferences.getSignature
 import gm.tieba.tabswitch.util.restart
 import java.io.File
@@ -63,37 +63,29 @@ object DeobfuscationHelper {
     }
 
     fun isVersionChanged(context: Context): Boolean {
-        val tsConfig = context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-        return tsConfig.getString("deobfs_version", "unknown") != getTbVersion(context)
+        return Preferences.getConfigString("deobfs_version", "unknown") != getTbVersion(context)
     }
 
     // 反混淆连续失败计数(熔断用): DexKit 对某版本宿主彻底失效时避免每次启动重试。
     // 计数绑定失败时的贴吧版本: 版本变化(升级贴吧/换回受支持版本)即自动清零重试;
     // 失败+1, 成功或 dex 未变更时清零
     fun getDeobfsFailCount(context: Context): Int {
-        val config = context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-        if (config.getString("deobfs_fail_tb", null) != getTbVersion(context)) {
+        if (Preferences.getConfigString("deobfs_fail_tb") != getTbVersion(context)) {
             return 0
         }
-        return config.getInt("deobfs_fail_count", 0)
+        return Preferences.getConfigInt("deobfs_fail_count", 0)
     }
 
     fun incDeobfsFailCount(context: Context): Int {
         val count = getDeobfsFailCount(context) + 1
-        context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-            .edit()
-            .putInt("deobfs_fail_count", count)
-            .putString("deobfs_fail_tb", getTbVersion(context))
-            .commit()
+        Preferences.putConfigInt("deobfs_fail_count", count)
+        Preferences.putConfigString("deobfs_fail_tb", getTbVersion(context))
         return count
     }
 
     fun resetDeobfsFailCount(context: Context) {
-        context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-            .edit()
-            .putInt("deobfs_fail_count", 0)
-            .putString("deobfs_fail_tb", getTbVersion(context))
-            .commit()
+        Preferences.putConfigInt("deobfs_fail_count", 0)
+        Preferences.putConfigString("deobfs_fail_tb", getTbVersion(context))
     }
 
     fun isDexChanged(context: Context): Boolean {
@@ -116,16 +108,12 @@ object DeobfuscationHelper {
     // 条数一致→ 维持捷径, 部分特征漂移仍按既有"规则异常"弹窗路径提示。
     private const val KEY_RULE_COUNT = "deobfs_rule_count"
 
-    fun saveRuleCount(context: Context, count: Int) {
-        context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-            .edit()
-            .putInt(KEY_RULE_COUNT, count)
-            .commit()
+    fun saveRuleCount(count: Int) {
+        Preferences.putConfigInt(KEY_RULE_COUNT, count)
     }
 
-    fun getRuleCount(context: Context): Int {
-        return context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-            .getInt(KEY_RULE_COUNT, -1)
+    fun getRuleCount(): Int {
+        return Preferences.getConfigInt(KEY_RULE_COUNT, -1)
     }
 
     // 反混淆时(或本版本模块完成完整 hooker 加载时)写入的模块身份。
@@ -140,27 +128,23 @@ object DeobfuscationHelper {
         return "${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})"
     }
 
-    fun getDeobfsModuleId(context: Context): String? {
+    fun getDeobfsModuleId(): String? {
         return try {
-            context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-                .getString(KEY_MODULE_ID, null)
+            Preferences.getConfigString(KEY_MODULE_ID)
         } catch (ignored: Throwable) {
             null
         }
     }
 
-    fun saveDeobfsModuleId(context: Context, moduleId: String) {
+    fun saveDeobfsModuleId(moduleId: String) {
         try {
-            context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-                .edit()
-                .putString(KEY_MODULE_ID, moduleId)
-                .commit()
+            Preferences.putConfigString(KEY_MODULE_ID, moduleId)
         } catch (ignored: Throwable) {
         }
     }
 
-    fun isRuleStoreIntact(context: Context): Boolean {
-        val expected = getRuleCount(context)
+    fun isRuleStoreIntact(): Boolean {
+        val expected = getRuleCount()
         val actual = AcRules.countAll()
         // 旧版本未记录预期条数: 降级为"非空即通过", 只拦截库被清空的场景
         if (if (expected < 0) actual > 0 else actual == expected) {
@@ -200,30 +184,25 @@ object DeobfuscationHelper {
     // 反混淆关键事件记录(与日志开关无关, 与失败计数同类): 开始/跳过/自愈/成败
     // 覆盖式写入 TS_config, 导出日志时随诊断摘要输出, 补上"日志开关未开导致
     // 反混淆过程完全不可见"的排查盲区。只记事件不记日志, 不违反开关约定
-    fun recordDeobfsRun(context: Context, event: String) {
+    fun recordDeobfsRun(event: String) {
         try {
             val time = SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA).format(Date())
-            context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-                .edit()
-                .putString("deobfs_last_run", "$time $event")
-                .commit()
+            Preferences.putConfigString("deobfs_last_run", "$time $event")
         } catch (ignored: Throwable) {
         }
     }
 
-    fun getDeobfsRun(context: Context): String {
+    fun getDeobfsRun(): String {
         return try {
-            context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-                .getString("deobfs_last_run", "none") ?: "none"
+            Preferences.getConfigString("deobfs_last_run", "none") ?: "none"
         } catch (ignored: Throwable) {
             "none"
         }
     }
 
-    fun getDeobfsVersion(context: Context): String {
+    fun getDeobfsVersion(): String {
         return try {
-            context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-                .getString("deobfs_version", "none") ?: "none"
+            Preferences.getConfigString("deobfs_version", "none") ?: "none"
         } catch (ignored: Throwable) {
             "none"
         }
@@ -275,19 +254,15 @@ object DeobfuscationHelper {
 
     private val sTbVersionCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    @SuppressLint("ApplySharedPref")
-    fun markDeobfsVersion(context: Context, version: String) {
-        context.getSharedPreferences("TS_config", Context.MODE_PRIVATE)
-            .edit()
-            .putString("deobfs_version", version)
-            .commit()
+    fun markDeobfsVersion(version: String) {
+        Preferences.putConfigString("deobfs_version", version)
     }
 
     // "重试并导出日志"路径专用: 落盘版本标记(触发下次启动的反混淆判定)后立即重启。
     // 常规反混淆流程的版本落盘改由 markDeobfsVersion 在扫描完成时执行,
     // 重启改由用户在完成对话框确认
     fun saveAndRestart(activity: Activity, version: String) {
-        markDeobfsVersion(activity, version)
+        markDeobfsVersion(version)
         restart(activity)
     }
 

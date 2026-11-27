@@ -11,8 +11,6 @@ import java.lang.reflect.Method
 // 信息流广告卡片拆分模块：FeedListPipeline 阶段注册 + 模板键过滤
 internal object PurgeAdFeedCards {
 
-    private val fallbackKeyMethods = HashMap<Class<*>, Method?>()
-
     // 诊断日志拆分模块（与过滤同源搬移，避免循环依赖）
     // 排查"新广告卡未被屏蔽"用: 日志开关开启(或 debug 构建)时, 在信息流列表入口
     // 记录首次出现的模板键(键 + 类名 + 载荷摘要), 新广告卡进入视野即留痕, 不必再
@@ -53,6 +51,12 @@ internal object PurgeAdFeedCards {
         }
     }
 
+    // 旧版本兜底的方法缓存: CHM + 哨兵(null 负缓存, PurgeAdPostPage.typeMethodCache
+    // 同范式)——此前 synchronized(HashMap) 在旧宿主上逐卡拿锁, 一旦走到该路径
+    // 就是首页滚动逐元素热路径
+    private val fallbackKeyMethods = java.util.concurrent.ConcurrentHashMap<Class<*>, Any>()
+    private val NO_METHOD = Any()
+
     private fun getTemplateKey(item: Any): String? {
         // 22.11+: 模板键接口 b(); 接口名随版本轮换(22.12 起为 nt9, 低版本为 fs9),
         // 探测逻辑共享 Fs9Api(同候选顺序, 含 b() 返回 String 校验)。接口解析成功
@@ -61,18 +65,20 @@ internal object PurgeAdFeedCards {
             return Fs9Api.cardKey(item)
         }
         // 旧版本兜底: 类中声明的首个 String 返回方法(同 Purge 的 sideway_card 判定)。
-        // 按类缓存(含"确无此方法"的 null 负缓存): 候选接口均未解析时此路径落在
+        // 按类缓存(含"确无此方法"的哨兵负缓存): 候选接口均未解析时此路径落在
         // 热路径上, 逐元素全方法表扫描会造成首页滚动反射放大
-        val md = synchronized(fallbackKeyMethods) {
-            // containsKey 判存而非 getOrPut: null 负缓存下 getOrPut 每次都会重算并覆盖
-            if (fallbackKeyMethods.containsKey(item.javaClass)) {
-                fallbackKeyMethods[item.javaClass]
-            } else {
-                runCatching { findFirstMethodByExactReturnType(item.javaClass, String::class.java) }.getOrNull()
-                    .also { fallbackKeyMethods[item.javaClass] = it }
+        fallbackKeyMethods[item.javaClass]?.let { cached ->
+            return if (cached === NO_METHOD) null else (cached as Method).let {
+                runCatching { it.invoke(item) as? String }.getOrNull()
             }
         }
-        return md?.let { runCatching { it.invoke(item) as? String }.getOrNull() }
+        val md = runCatching { findFirstMethodByExactReturnType(item.javaClass, String::class.java) }.getOrNull()
+        if (md != null) {
+            fallbackKeyMethods[item.javaClass] = md
+            return runCatching { md.invoke(item) as? String }.getOrNull()
+        }
+        fallbackKeyMethods[item.javaClass] = NO_METHOD
+        return null
     }
 
     // 22.11+: 推荐流为模板卡片体系(fs9), 卡片类型由模板键 fs9.b() 标识,

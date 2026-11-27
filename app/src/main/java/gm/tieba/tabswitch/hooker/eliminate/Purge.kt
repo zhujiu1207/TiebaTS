@@ -72,10 +72,6 @@ class Purge : XposedContext(), IHooker, Obfuscated {
             }
         }
 
-    // replace 的类型安全零值收编为 XposedContext.safeZeroValueFor(此前与
-    // ForbidGesture 各持一份逐字相同的私有实现)
-    private fun safeZeroValue(type: Class<*>): Any? = safeZeroValueFor(type)
-
     // 中段注册点逐项隔离: 任一注册点抛异常(类名/签名随宿主版本漂移)只损失该功能
     // 点; hooker 级 catch 只兜崩溃不补注册, 不隔离时一个点漂移会让 hook() 其后的
     // 全部净化钩子静默不注册。失败双写日志便于反馈排查
@@ -138,7 +134,7 @@ class Purge : XposedContext(), IHooker, Obfuscated {
                         // 按返回类型安全化: 目标类中同参方法群若混有基本类型返回值,
                         // replace null 会在宿主调用点拆箱 NPE(hook 桥兜不住)
                         hookReplaceMethod(md) { param ->
-                            safeZeroValue((param.method as java.lang.reflect.Method).returnType)
+                            safeZeroValueFor((param.method as java.lang.reflect.Method).returnType)
                         }
                     }
 
@@ -721,38 +717,13 @@ class Purge : XposedContext(), IHooker, Obfuscated {
     // 运营活动横幅模板键: 卡片键 b()=feed_banner(22.13 vd9.p / 22.12 zth 同构)
     private val BANNER_TEMPLATE_KEYS = setOf("feed_banner")
 
-    // 合成卡(外层)键: banner_card layout 经 wm9 工厂包装为 common_card/stagger_card
-    private val BANNER_COMPOSITE_KEYS = setOf("common_card", "stagger_card")
-
-    // 合成卡载荷内的内层卡是否含横幅卡
-    private fun payloadHasBannerCard(payload: Any): Boolean {
-        for (field in Fs9Api.resolveListFields(payload.javaClass)) {
-            val inner = runCatching { field.get(payload) as? List<*> }.getOrNull() ?: continue
-            for (element in inner) {
-                if (element == null) continue
-                val key = Fs9Api.cardKey(element)
-                if (key != null && key in BANNER_TEMPLATE_KEYS) return true
-            }
-        }
-        return false
-    }
-
     // 列表入口处过滤横幅卡; 独立横幅卡移除条目, 合成卡内嵌横幅移除整帖。
-    // 复制式过滤, 无命中返回原列表; Fs9Api 未解析(旧版本)时跳过不拦
-    private fun filterBannerFeedList(list: List<*>?): List<*>? {
-        if (list == null || list.isEmpty()) return list
-        if (!Fs9Api.resolve()) return list
-        return Fs9Api.filterCopy(list) { item ->
-            if (item == null) return@filterCopy false
-            val key = Fs9Api.cardKey(item) ?: return@filterCopy false
-            if (key in BANNER_COMPOSITE_KEYS) {
-                val payload = runCatching { Fs9Api.cardPayload(item) }.getOrNull()
-                payload != null && payloadHasBannerCard(payload)
-            } else {
-                key in BANNER_TEMPLATE_KEYS
-            }
+    // 骨架共享于 Fs9Api.filterByCardKeys(原手写主循环已收编); 合成卡键取
+    // Fs9Api.COMPOSITE_CARD_KEYS 单点
+    private fun filterBannerFeedList(list: List<*>?): List<*>? =
+        Fs9Api.filterByCardKeys(list, BANNER_TEMPLATE_KEYS) { payload ->
+            Fs9Api.payloadHasKey(payload, BANNER_TEMPLATE_KEYS)
         }
-    }
 
     // 首页彩蛋广告: 首页底部横幅广告(带倒计时关闭, 服务端 sync 下发, 非每次出现)。
     // 展示链路(22.12 反编译): sync 数据的 floating_icon.easter_egg 由 rz8.parseJson

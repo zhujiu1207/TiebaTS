@@ -100,11 +100,16 @@ object Fs9Api : XposedContext() {
         return out
     }
 
-    // @Synchronized: 主线程与后台解码线程可能并发首调, resolved 检查无锁时两侧
-    // 都会跑一遍候选循环(幂等无害但注释宣称"每进程只跑一次"须成立);
-    // resolved 置位在结果发布之后, 锁内执行不改变 volatile 发布序
-    @Synchronized
+    // 快路径先行: resolved 为 volatile, 已解析时零锁直返——本方法挂在每页列表
+    // 过滤的入口上(管线 10 阶段 × 每页多列表), @Synchronized 全方法锁在
+    // resolved 后的每次调用都是纯白付。仅未解析的首调进锁
     fun resolve(): Boolean {
+        if (resolved) return keyMethod != null
+        return resolveLocked()
+    }
+
+    @Synchronized
+    private fun resolveLocked(): Boolean {
         if (resolved) return keyMethod != null
         return try {
             for (name in INTERFACE_CANDIDATES) {
@@ -201,6 +206,11 @@ object Fs9Api : XposedContext() {
     // 模板卡键: 内层 head 分段与外层合成卡(口径与 ForbidAd4TieBa 一致)
     private const val FEED_HEAD_KEY = "feed_head"
     private const val OUTER_COMPOSITE_KEY = "common_card"
+
+    // 外层合成卡键集合(横幅/视频/打分/推荐吧等载荷过滤共用): "common_card" +
+    // "stagger_card" 此前在 Purge.BANNER_COMPOSITE_KEYS 与 PurgeAdKeys.
+    // SCORING_COMPOSITE_KEYS 各持一份字面量, 收敛为单一事实源
+    internal val COMPOSITE_CARD_KEYS = setOf("common_card", "stagger_card")
 
     // feed_head 卡的 UI 态类(类名稳定), 仅作候选判定; 类名混淆时 head 由
     // 模板键兜底。失败置位不重试(旧版本宿主上避免热路径反复构造异常),
@@ -401,5 +411,42 @@ object Fs9Api : XposedContext() {
             return ArrayList<Any?>()
         }
         return out ?: list
+    }
+
+    // 独立卡+合成卡两级键过滤(收编自 Purge 横幅/PurgeVideo/PurgeAdScoring/
+    // RecommendForumFilter/LivePostFilter 五处手写主循环): 独立模板卡命中
+    // dropKeys 移除条目; 合成卡(compositeKeys)取载荷交 payloadPredicate 判定,
+    // 命中整帖移除。复制式过滤, 无命中返回原列表; Fs9Api 未解析(旧版本宿主)
+    // 时跳过不拦。判定谓词返回 false = 不移除该帖。
+    // payloadCheckAllOuter=false(收编自 Purge 横幅/PurgeAdScoring 口径):
+    // 仅 compositeKeys 的卡探测载荷——banner/打分卡服务端只以
+    // common_card/stagger_card 外壳下发;
+    // =true(收编自 PurgeVideo/RecommendForum/LivePost 原实现口径):
+    // 对任意非 dropKeys 命中的条目都探测载荷——宿主还存在其它形态的合成卡
+    // (如 home_delegate_card, 实时热点卡以它为外壳内嵌 BaseCardInfo 列表,
+    // 见 HotPostFilter 头注释), 该形态内嵌视频/直播/推荐吧时不探测即漏拦。
+    // LivePostFilter 无独立模板键, dropKeys 传空集、谓词表达"载荷含直播 head 即删"
+    fun filterByCardKeys(
+        list: List<*>?,
+        dropKeys: Set<String>,
+        compositeKeys: Set<String> = COMPOSITE_CARD_KEYS,
+        payloadCheckAllOuter: Boolean = false,
+        payloadPredicate: (Any) -> Boolean,
+    ): List<*>? {
+        if (list == null || list.isEmpty()) return list
+        if (!resolve()) return list
+        return filterCopy(list) { item ->
+            if (item == null) return@filterCopy false
+            val key = cardKey(item)
+            if (key != null && key in dropKeys) return@filterCopy true
+            // 宽口径(payloadCheckAllOuter=true)对任意未命中键(含 null 键)探测载荷;
+            // 窄口径仅合成键探测, null 键/其它键保持原样——与五份原实现逐一对应
+            if (payloadCheckAllOuter || (key != null && key in compositeKeys)) {
+                val payload = runCatching { cardPayload(item) }.getOrNull()
+                payload != null && payloadPredicate(payload)
+            } else {
+                false
+            }
+        }
     }
 }

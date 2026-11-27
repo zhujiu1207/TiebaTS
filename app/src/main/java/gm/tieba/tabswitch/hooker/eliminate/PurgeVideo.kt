@@ -8,7 +8,6 @@ import gm.tieba.tabswitch.hooker.deobfuscation.Matcher
 import gm.tieba.tabswitch.dao.AcRules.findRule
 import gm.tieba.tabswitch.logBoth
 import org.luckypray.dexkit.query.matchers.ClassMatcher
-import java.lang.reflect.Field
 
 class PurgeVideo : XposedContext(), IHooker, Obfuscated {
 
@@ -123,40 +122,15 @@ class PurgeVideo : XposedContext(), IHooker, Obfuscated {
     // 22.11+: 模板键 → 视频贴判定
     private val VIDEO_TEMPLATE_KEYS = setOf("video", "video_card", "staggered_video")
 
-    // 载荷类实例的 List 字段(含继承), 共享缓存见 Fs9Api.resolveListFields
-    private fun resolveListFields(clazz: Class<*>): List<Field> =
-        Fs9Api.resolveListFields(clazz)
-
-    // 合成卡载荷内的内层卡是否含视频卡
-    private fun payloadHasVideoCard(payload: Any): Boolean {
-        for (field in resolveListFields(payload.javaClass)) {
-            val inner = runCatching { field.get(payload) as? List<*> }.getOrNull() ?: continue
-            for (element in inner) {
-                if (element == null) continue
-                val key = Fs9Api.cardKey(element) ?: continue
-                if (key in VIDEO_TEMPLATE_KEYS) return true
-            }
+    // 在适配器列表入口处过滤视频模板卡; 返回原列表表示无需修改。
+    // 骨架共享于 Fs9Api.filterByCardKeys(原手写主循环已收编):
+    // 独立视频卡直接移除; 合成卡载荷内的内层卡含视频则整帖移除。
+    // payloadCheckAllOuter=true 保持原实现对任意非命中键条目都探测载荷的口径
+    // (home_delegate_card 等其它外壳合成卡内嵌视频时不可漏)
+    private fun filterTemplateList(list: List<*>?): List<*>? =
+        Fs9Api.filterByCardKeys(list, VIDEO_TEMPLATE_KEYS, payloadCheckAllOuter = true) { payload ->
+            Fs9Api.payloadHasKey(payload, VIDEO_TEMPLATE_KEYS)
         }
-        return false
-    }
-
-    // 在适配器列表入口处过滤视频模板卡; 返回原列表表示无需修改
-    private fun filterTemplateList(list: List<*>?): List<*>? {
-        if (list == null || list.isEmpty()) return list
-        if (!Fs9Api.resolve()) return list
-        return Fs9Api.filterCopy(list) { item ->
-            if (item == null) return@filterCopy false
-            val key = Fs9Api.cardKey(item)
-            if (key != null && key in VIDEO_TEMPLATE_KEYS) {
-                // 独立视频卡直接移除
-                true
-            } else {
-                // 合成卡: 载荷内的内层卡含视频则整帖移除
-                val payload = runCatching { Fs9Api.cardPayload(item) }.getOrNull()
-                payload != null && payloadHasVideoCard(payload)
-            }
-        }
-    }
 
     // RecyclerView 类按缓存复用: 视频卡 attach/detach(列表滚动时高频)的父链
     // 上每层都 findClass 属重复固定开销, 解析一次即可(解析失败由 lazy 重试)

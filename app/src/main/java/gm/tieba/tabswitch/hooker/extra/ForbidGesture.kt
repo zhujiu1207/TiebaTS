@@ -53,7 +53,7 @@ class ForbidGesture : XposedContext(), IHooker, Obfuscated {
                 when (matcher) {
                     // 按返回类型安全化: replace null 遇基本类型返回值会在宿主调用点拆箱 NPE
                     "forbid_gesture" -> hookReplaceMethod(clazz, method) { param ->
-                        safeZeroValue((param.method as java.lang.reflect.Method).returnType)
+                        safeZeroValueFor((param.method as java.lang.reflect.Method).returnType)
                     }
                     // 保留原返回值类型(Host 版本漂移时可能是 Double/Int), 避免硬 as Float 的 CCE
                     "Ljava/lang/Math;->sqrt(D)D" -> hookAfterMethod(clazz, method, Bitmap::class.java) { param ->
@@ -111,8 +111,4 @@ class ForbidGesture : XposedContext(), IHooker, Obfuscated {
         } catch (ignored: Throwable) {
         }
     }
-
-    // replace 的类型安全零值收编为 XposedContext.safeZeroValueFor(此前与
-    // Purge 各持一份逐字相同的私有实现)
-    private fun safeZeroValue(type: Class<*>): Any? = safeZeroValueFor(type)
 }

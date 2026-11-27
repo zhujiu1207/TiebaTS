@@ -43,6 +43,12 @@ import java.util.WeakHashMap
 // UserData(或其子类)。探测失败仅损失本功能, 不抛异常。
 class ProfileUserId : XposedContext(), IHooker {
 
+    // DOM 探测结果的字段提取正则: 此前在每轮探测回调内现场编译(每主页最多 4 轮),
+    // 提为常量后零重复构造(OneKeyLottery mentionsMe 的 Pattern 缓存同范式)
+    private val ID_REGEX = Regex("\"id\":\"(\\d+)\"")
+    private val NAME_REGEX = Regex("\"name\":\"([^\"]+)\"")
+    private val LOC_REGEX = Regex("\"loc\":\"([^\"]*)\"")
+
     override fun key(): String {
         return "get_user_id"
     }
@@ -170,9 +176,9 @@ class ProfileUserId : XposedContext(), IHooker {
                 ?.removePrefix("\"")?.removeSuffix("\"")
                 ?.replace("\\\"", "\"")?.replace("\\\\", "\\")
             if (payload.isNullOrEmpty() || !payload.startsWith("{")) return
-            val id = Regex("\"id\":\"(\\d+)\"").find(payload)?.groupValues?.get(1)
-            val name = Regex("\"name\":\"([^\"]+)\"").find(payload)?.groupValues?.get(1)
-            val loc = Regex("\"loc\":\"([^\"]*)\"").find(payload)?.groupValues?.get(1)
+            val id = ID_REGEX.find(payload)?.groupValues?.get(1)
+            val name = NAME_REGEX.find(payload)?.groupValues?.get(1)
+            val loc = LOC_REGEX.find(payload)?.groupValues?.get(1)
             // WebView 复用: 轮询早段可能读到上一个页面残留 DOM。主页 SPA 的
             // loc 有两种形态(22.14 实测): 入口 userCenter/hybrid 与 SPA 内部
             // 导航后的 hybrid-main-common/common, 两者都采信; 其余(其它功能

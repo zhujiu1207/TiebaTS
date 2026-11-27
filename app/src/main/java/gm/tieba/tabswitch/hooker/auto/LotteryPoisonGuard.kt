@@ -201,28 +201,11 @@ internal object LotteryPoisonGuard {
         }
     }
 
-    // 账号 uid 候选：当前账号 + Adp + 数据库目录扫描（免打扰/时间戳修复等按账号隔离场景共用）。
-    // uid 会拼进 "UPDATE tb_group_chat_room_$uid ..." 的 SQL, 必须校验纯数字
+    // 账号 uid 候选：当前账号 + Adp（共享取值与纯数字校验收编于
+    // lotteryVerifiedAccountUids）+ 数据库目录扫描（免打扰/时间戳修复等
+    // 按账号隔离场景需要覆盖旧账号残留库）
     private fun candidateAccountUids(context: android.content.Context): List<String> {
-        val candidateUids = mutableListOf<String>()
-        try {
-            // getCurrentAccountId 可能返回 long, 按 Number 兼容取值(as? String 会得到 null)
-            val accountId = XposedHelpers.callStaticMethod(
-                findClass("com.baidu.tbadk.core.TbadkCoreApplication"), "getCurrentAccountId"
-            )
-            val accountIdStr = when (accountId) {
-                is Number -> accountId.toLong().toString().takeIf { it != "0" }
-                is String -> accountId.takeIf { it.isNotEmpty() }
-                else -> null
-            }
-            if (accountIdStr?.matches(Regex("\\d+")) == true) candidateUids.add(accountIdStr)
-        } catch (tr: Throwable) {
-            lotteryTsLog("一键抽奖获取账号失败 -- $tr")
-        }
-        try {
-            gm.tieba.tabswitch.dao.Adp.account?.let { if (it.isNotEmpty() && it.matches(Regex("\\d+"))) candidateUids.add(it) }
-        } catch (ignored: Throwable) {
-        }
+        val candidateUids = lotteryVerifiedAccountUids("一键抽奖").toMutableList()
         val dbDir = context.getDatabasePath("x").parentFile
         dbDir?.listFiles()?.forEach { f ->
             val name = f.name.removeSuffix(".db")

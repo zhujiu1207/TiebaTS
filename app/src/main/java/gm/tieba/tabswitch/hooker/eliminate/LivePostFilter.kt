@@ -2,7 +2,6 @@ package gm.tieba.tabswitch.hooker.eliminate
 
 import gm.tieba.tabswitch.XposedContext
 import gm.tieba.tabswitch.hooker.IHooker
-import java.lang.reflect.Field
 
 // 屏蔽首页直播贴, 移植自 ForbidAd4TieBa 的"屏蔽直播帖"(custom_post_filter.live):
 // 直播贴无独立模板卡, 判定依据是合成卡载荷内 feed_head 的稳定类名
@@ -23,14 +22,6 @@ class LivePostFilter : XposedContext(), IHooker {
         FeedListPipeline.register { list, _, _ -> filterTemplateList(list) }
     }
 
-    // 模板卡数据项接口 (22.12=nt9/fs9, 22.13=eu9): d()=载荷; 与 PurgeVideo/HotPostFilter 相同(共享 Fs9Api)
-    private fun resolvePayloadMethod(): Boolean = Fs9Api.resolve()
-
-    // feed_head 参数类为 CardHeadUiState(类名稳定, Map字段名混淆), 其全部 Map 实例
-    // 字段解析共享于 Fs9Api.resolveHeadState/resolveMapFields(此前本文件自持一份
-    // 相同的 synchronized 双检实现)
-    private fun resolveHeadState(): Class<*>? = Fs9Api.resolveHeadState()
-
     // feed_head 参数内 recom_type == "3" 即直播推荐
     private fun isLiveHead(head: Any): Boolean {
         for (field in Fs9Api.resolveMapFields(head.javaClass)) {
@@ -41,39 +32,25 @@ class LivePostFilter : XposedContext(), IHooker {
         return false
     }
 
-    // 载荷类实例的 List 字段(含继承), 共享缓存见 Fs9Api.resolveListFields
-    private fun resolveListFields(clazz: Class<*>): List<Field> =
-        Fs9Api.resolveListFields(clazz)
+    // 合成卡载荷内的内层卡是否含直播 feed_head(键扫描骨架共享于 Fs9Api.
+    // filterByCardKeys, head 类双路定位复用 payloadHasHead)
+    private fun payloadHasLiveHead(payload: Any): Boolean =
+        Fs9Api.payloadHasHead(payload) { isLiveHead(it) }
 
-    // 合成卡载荷内的内层卡是否含直播 feed_head
-    private fun payloadHasLiveHead(payload: Any): Boolean {
-        val headClass = resolveHeadState() ?: return false
-        for (field in resolveListFields(payload.javaClass)) {
-            val inner = runCatching { field.get(payload) as? List<*> }.getOrNull() ?: continue
-            for (element in inner) {
-                if (element == null) continue
-                if (!headClass.isInstance(element)) continue
-                if (isLiveHead(element)) return true
-            }
-        }
-        return false
-    }
-
-    // 在适配器列表入口处过滤直播贴, 返回原列表表示无需修改
+    // 在适配器列表入口处过滤直播贴, 返回原列表表示无需修改。
+    // 无独立模板键: 载荷含直播 head 即整帖移除, dropKeys 传空集表达。
+    // payloadCheckAllOuter=true 保持原实现"完全不看键、对所有条目探测载荷"的
+    // 口径(直播贴判定只依赖载荷内 feed_head, 键限定会把其它外壳合成卡漏掉)
+    // 诊断日志按"本次实际发生丢弃"记录(骨架无命中时返回原列表引用)
     private fun filterTemplateList(list: List<*>?): List<*>? {
-        if (list == null || list.isEmpty()) return list
-        if (!resolvePayloadMethod()) return list
-        return Fs9Api.filterCopy(list) { item ->
-            if (item == null) return@filterCopy false
-            val payload = runCatching { Fs9Api.cardPayload(item) }.getOrNull()
-            val drop = payload != null && payloadHasLiveHead(payload)
-            if (drop) {
-                // 仅在用户开启日志时记录, 不做常驻 logcat 输出(每丢弃一卡一条)
-                if (gm.tieba.tabswitch.util.Logger.isEnabled()) {
-                    gm.tieba.tabswitch.util.Logger.log("live_post dropped")
-                }
-            }
-            drop
+        val filtered = Fs9Api.filterByCardKeys(
+            list, emptySet(), payloadCheckAllOuter = true
+        ) { payload ->
+            payloadHasLiveHead(payload)
         }
+        if (filtered !== list && gm.tieba.tabswitch.util.Logger.isEnabled()) {
+            gm.tieba.tabswitch.util.Logger.log("live_post dropped")
+        }
+        return filtered
     }
 }

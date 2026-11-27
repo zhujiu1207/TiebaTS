@@ -345,14 +345,6 @@ class UserFilter : XposedContext(), IHooker, KeywordFilter {
         fun splitIds(raw: String): List<String> =
             raw.split('/').map { it.trim() }.filter { it.isNotEmpty() }
 
-        // 按内部编号反查已收割的标识(展示用): 优先 portrait(官方唯一头像ID),
-        // 回退用户名/昵称; 无收割记录返回 null
-        fun identifierFor(internalId: String): String? {
-            loadMapIfNeeded()
-            sNameMap.entries.firstOrNull { it.value == internalId }?.let { return it.key }
-            return sIdMap.entries.firstOrNull { it.value == internalId }?.key
-        }
-
         // 按用户名/昵称查其 portrait(获取ID按钮展示用); 未收割过返回 null。
         // 两跳: 名字→编号→portrait
         fun lookupPortraitByName(name: String): String? {

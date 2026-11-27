@@ -83,18 +83,21 @@ internal object LotteryLedger {
         return prefs.getStringSet(daySetKey(prefix), emptySet()) ?: emptySet()
     }
 
-    internal fun daySetAdd(context: Context, prefix: String, roomId: Long) {
+    // day-set 读写共用通道：读原集合 → mutate → 覆写回（daySetAdd/daySetRemove
+    // 除一行 add/remove 外逐字相同, 收敛于此）
+    private inline fun updateDaySet(context: Context, prefix: String, mutate: (MutableSet<String>) -> Unit) {
         val prefs = context.getSharedPreferences(LOTTERY_CLAIM_PREFS_NAME, Context.MODE_PRIVATE)
         val set = (prefs.getStringSet(daySetKey(prefix), emptySet()) ?: emptySet()).toMutableSet()
-        set.add(roomId.toString())
+        mutate(set)
         prefs.edit().putStringSet(daySetKey(prefix), set).apply()
+    }
+
+    internal fun daySetAdd(context: Context, prefix: String, roomId: Long) {
+        updateDaySet(context, prefix) { it.add(roomId.toString()) }
     }
 
     // 仅补发例外通道使用：把本次运行内证实未送达的房间移出"已发"登记，重发成功后重新登记
     internal fun daySetRemove(context: Context, prefix: String, roomId: Long) {
-        val prefs = context.getSharedPreferences(LOTTERY_CLAIM_PREFS_NAME, Context.MODE_PRIVATE)
-        val set = (prefs.getStringSet(daySetKey(prefix), emptySet()) ?: emptySet()).toMutableSet()
-        set.remove(roomId.toString())
-        prefs.edit().putStringSet(daySetKey(prefix), set).apply()
+        updateDaySet(context, prefix) { it.remove(roomId.toString()) }
     }
 }

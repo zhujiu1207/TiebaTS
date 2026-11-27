@@ -225,11 +225,38 @@ class HotPostFilter : XposedContext(), IHooker {
     // 完整目的地, 卡内正文/头像等普通 http 字段不会误伤
     private fun hasHotTopicSchema(obj: Any?): Boolean {
         if (obj == null) return false
-        for (field in resolveStringFields(obj.javaClass)) {
-            val value = runCatching { field.get(obj) as? String }.getOrNull() ?: continue
-            if (isHotTopicRoute(value)) return true
+        // per-pass memo(机制同 Fs9Api.PassMemo/GameExtMemo): 管线一轮内同一载荷/
+        // 内层元素会被 payloadHasHotCard 双路重复送进来(载荷自身判定 + 内层元素
+        // 判定), 每次 String 字段全扫 + 逐值 URI 构造是 O(字段数) 反射; 判定结果
+        // 对同一对象在一代内恒定(只读), 含 false 负结果一并缓存
+        val memo = sSchemaMemo.get()!!.also { it.maybeReset(Fs9Api.currentPassGeneration()) }
+        memo.results.containsKey(obj)?.let { return it }
+        val result = runCatching {
+            for (field in resolveStringFields(obj.javaClass)) {
+                val value = field.get(obj) as? String ?: continue
+                if (isHotTopicRoute(value)) return@runCatching true
+            }
+            false
+        }.getOrDefault(false)
+        memo.results[obj] = result
+        return result
+    }
+
+    // hasHotTopicSchema 的 per-pass memo(含 false 负缓存)
+    private class SchemaMemo {
+        var generation = -1L
+        val results = java.util.IdentityHashMap<Any, Boolean>()
+
+        fun maybeReset(current: Long) {
+            if (generation != current) {
+                generation = current
+                results.clear()
+            }
         }
-        return false
+    }
+
+    private val sSchemaMemo = object : ThreadLocal<SchemaMemo>() {
+        override fun initialValue(): SchemaMemo = SchemaMemo()
     }
 
     // 从对象上提取 card_type 的取值器列表: 对象自身无参 Map 方法 + 其对象字段

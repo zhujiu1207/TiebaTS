@@ -47,6 +47,23 @@ object Preferences {
 
     fun getStringSet(key: String): Set<String> = sTsPreferences.getStringSet(key, emptySet()) ?: emptySet()
 
+    // Config 通用读写: DeobfuscationHelper 的反混淆状态键(deobfs_version/
+    // deobfs_fail_count/deobfs_module_id/deobfs_last_run 等)此前逐方法直开
+    // TS_config, 收敛为 DAO 单点。int 写入统一 commit: 反混淆计数/版本标记
+    // 紧随进程重启的场景(saveAndRestart/扫描收尾)不允许 apply 异步丢失
+    fun getConfigString(key: String, defValue: String? = null): String? =
+        sTsConfig.getString(key, defValue)
+
+    fun getConfigInt(key: String, defValue: Int): Int = sTsConfig.getInt(key, defValue)
+
+    fun putConfigString(key: String, value: String) {
+        sTsConfig.edit().putString(key, value).commit()
+    }
+
+    fun putConfigInt(key: String, value: Int) {
+        sTsConfig.edit().putInt(key, value).commit()
+    }
+
     // Config
     fun putEULAAccepted() {
         sTsConfig.edit().putBoolean("EULA", true).apply()

@@ -153,6 +153,6 @@ class Deobfuscation : XposedContext() {
             putSignature(DeobfuscationHelper.dexSignatureHash(apk), durable = true)
         }
         // 同时记录本次写入的规则条数, 供"dex 未变更"捷径做规则库完整性校验
-        DeobfuscationHelper.saveRuleCount(getContext(), countAll())
+        DeobfuscationHelper.saveRuleCount(countAll())
     }
 }

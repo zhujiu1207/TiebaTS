@@ -637,7 +637,7 @@ class XposedInit : XposedContext() {
                 // 后台进程不进此分支: 补扫期间它们可能读到 dropAllRules 后的空库,
                 // 且并发 putSignature(0) 会覆盖主进程扫描收尾写入的正确签名;
                 // 直接落到下方正常加载, 按部分规则运行(hooker 逐规则隔离, 缺失静默降级)
-                if (getDeobfsModuleId(getContext()) != currentModuleId() &&
+                if (getDeobfsModuleId() != currentModuleId() &&
                     !DeobfuscationHooker.isBreakerTripped(getContext())
                 ) {
                     putSignature(0)
@@ -696,7 +696,7 @@ class XposedInit : XposedContext() {
                             // SAF 读取日志尾部有 I/O 延迟, 放后台执行, 分享面板回主线程拉起;
                             // 日志开关未开启时仍导出诊断摘要(版本/设备/缺失规则/deobfs 状态),
                             // 不为导出而绕过"开关关闭不记录"的约定
-                            recordDeobfsRun(activity, "用户点重试并导出日志")
+                            recordDeobfsRun("用户点重试并导出日志")
                             // 用户主动重试 = 明确要求再扫: 清零失败计数, 否则熔断
                             // (连续失败3次)未解除时重启后仍直接跳过补扫, 重试永远无效
                             DeobfuscationHelper.resetDeobfsFailCount(activity)
@@ -718,10 +718,10 @@ class XposedInit : XposedContext() {
                                     appendLine(
                                         "运行日志开关: ${if (Logger.isEnabled()) "开" else "关"}"
                                     )
-                                    appendLine("deobfs_version: ${DeobfuscationHelper.getDeobfsVersion(activity)}")
-                                    appendLine("预期规则条数: ${DeobfuscationHelper.getRuleCount(activity)}")
+                                    appendLine("deobfs_version: ${DeobfuscationHelper.getDeobfsVersion()}")
+                                    appendLine("预期规则条数: ${DeobfuscationHelper.getRuleCount()}")
                                     appendLine("实际规则条数: ${AcRules.countAll()}")
-                                    appendLine("上次反混淆事件: ${DeobfuscationHelper.getDeobfsRun(activity)}")
+                                    appendLine("上次反混淆事件: ${DeobfuscationHelper.getDeobfsRun()}")
                                     appendLine()
                                     appendLine("===== 模块日志(尾部) =====")
                                     val logText = Logger.readLogTail()

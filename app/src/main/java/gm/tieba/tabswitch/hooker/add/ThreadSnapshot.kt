@@ -157,16 +157,47 @@ class ThreadSnapshot : XposedContext(), IHooker {
             if (errorno == 0) {
                 captureFull(rawBytes, idl)
             } else {
-                replayIfNeeded(param, rawBytes, errorno)
+                replayIfNeeded(param, errorno, idl)
             }
         }.onFailure {
             Logger.log("缓存钩点处理失败(full): $it")
         }
     }
 
+    // Wire 解析器与反射元数据按哨兵负缓存模式缓存(同 PurgeAdPostPage 口径):
+    // parsePbList 挂在每个 Pb 响应的 convert after 钩子上(首屏+翻页每响应一次),
+    // 每次都 findClass+getDeclaredConstructor 是热路径重复反射。类缺失(老宿主
+    // 无 com.squareup.wire.Wire)按"解析失败"置位不再重试, 与宿主升级新进程自然恢复
+    private val WIRE_UNRESOLVED_SENTINEL: Class<*> = ThreadSnapshot::class.java
+
+    @Volatile
+    private var sWireClass: Class<*>? = WIRE_UNRESOLVED_SENTINEL
+
+    @Volatile
+    private var sWireCtor: java.lang.reflect.Constructor<*>? = null
+
+    private fun resolveWireCtor(): java.lang.reflect.Constructor<*>? {
+        sWireCtor?.let { return it }
+        if (sWireClass === WIRE_UNRESOLVED_SENTINEL) {
+            sWireClass = try {
+                findClass("com.squareup.wire.Wire")
+            } catch (ignored: Throwable) {
+                null
+            }
+        }
+        val clazz = sWireClass ?: return null
+        return try {
+            clazz.getDeclaredConstructor(arrayOf<Class<*>>().javaClass).also { sWireCtor = it }
+        } catch (ignored: Throwable) {
+            null
+        }
+    }
+
     private fun parsePbList(bytes: ByteArray): Any? = runCatching {
+        val ctor = resolveWireCtor() ?: return null
         XposedHelpers.callMethod(
-            newWire(), "parseFrom", bytes, findClass("tbclient.PbList.PbListResIdl"))
+            ctor.newInstance(arrayOf<Class<*>>()), "parseFrom", bytes,
+            findClass("tbclient.PbList.PbListResIdl"))
     }.getOrNull()
 
     // errorno 取自已 parse 的 PbListResIdl: error 缺失(部分响应无 error 字段)
@@ -177,11 +208,6 @@ class ThreadSnapshot : XposedContext(), IHooker {
             (XposedHelpers.getObjectField(error, "errorno") as? Int) ?: 0
         }.getOrDefault(-1)
     }
-
-    private fun newWire(): Any =
-        findClass("com.squareup.wire.Wire")
-            .getDeclaredConstructor(arrayOf<Class<*>>().javaClass)
-            .newInstance(arrayOf<Class<*>>())
 
     // 捕获: 原始 PbListResIdl 字节整块落库(含 error 头, 回放时无需重组)。
     // tid 从响应体 data.thread.id 取(proto 字段直读, 无 getter——
@@ -212,14 +238,15 @@ class ThreadSnapshot : XposedContext(), IHooker {
     // 回放: 用缓存字节重调 convert。快照存的就是完整 PbListResIdl 原始字节,
     // 直接喂回; gud.b() 转换与宿主渲染链零感知。
     // tid 从当前响应体取(回放前提是能 parse 出 thread.id 定位快照——
-    // 错误响应通常也带 thread 上下文; parse 不出则放行原错误流程)
+    // 错误响应通常也带 thread 上下文; parse 不出则放行原错误流程)。
+    // idl 直接收 handleFullConvert 已 parse 的结果: 此前对同一 rawBytes 二次
+    // parse(单帖响应百 KB 级), 纯属重复
     private fun replayIfNeeded(
         param: XC_MethodHook.MethodHookParam,
-        rawBytes: ByteArray,
-        errorno: Int
+        errorno: Int,
+        idl: Any
     ) {
         val tid = runCatching {
-            val idl = parsePbList(rawBytes) ?: return
             val data = XposedHelpers.getObjectField(idl, "data") ?: return
             val thread = XposedHelpers.getObjectField(data, "thread")
             thread?.let { XposedHelpers.getObjectField(it, "id")?.toString() }

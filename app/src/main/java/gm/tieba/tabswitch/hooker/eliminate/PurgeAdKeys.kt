@@ -79,4 +79,23 @@ internal object PurgeAdKeys {
     internal const val TTAD_SDK = "com.bytedance.sdk.openadsdk.TTAdSdk"
     internal const val KSAD_SDK = "com.kwad.sdk.api.KsAdSDK"
     internal const val GDT_SDK = "com.qq.e.comm.managers.GDTAdSdk"
+
+    // ---------- 满意度打分卡(NPS 调研的列表内嵌形态, PurgeAdScoring 管辖) ----------
+
+    // 模板卡键(卡片数据类 b() 恒定字面量, 未混淆):
+    //   bawu_score_card  吧内热门"核心吧友专属"打分卡(22.15 qe9/kia/CardBawuScoreView,
+    //                    经 LayoutFactory 分发键 bawu_feedback_card → ao9 解析; 22.11~22.14
+    //                    同键异类 nb9/vc9/aga/lha, 键本身五版本一致)
+    //   comment_scoring  帖子内"您认为当前评论区的氛围如何"打分卡(22.12 起存在:
+    //                    22.12 x7d/l3d, 22.13 o9d/k3d, 22.14 vbd/r5d, 22.15 xcd/wcd,
+    //                    经 CommentTemplateAdapter.submitList 灌入; 22.11 无此键)
+    internal val SCORING_TEMPLATE_KEYS = setOf("bawu_score_card", "comment_scoring")
+
+    // 合成卡键: 打分卡可能内嵌于外层合成卡载荷——字面量已并入 Fs9Api.
+    // COMPOSITE_CARD_KEYS 单一事实源, 消费方(Fs9Api.filterByCardKeys 默认参)直接取用
+
+    // 评论区打分卡视图(未混淆稳定类名, 22.12 起存在): PurgeAdScoring 通道3 视图级
+    // 兜底目标。注意共享视图 ScoringComponentView(被图片查看器评分条复用)不在此列,
+    // 全局 hook 会误伤, 见 PurgeAdScoring 文件头注释
+    internal const val PB_COMMENT_SCORING_VIEW = "com.baidu.tieba.pb.pagebrowser.comment.scoring.PbCommentScoringView"
 }

@@ -1,14 +1,17 @@
 -allowaccessmodification
--keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
 # libxposed API 102 入口: 类名由 META-INF/xposed/java_init.list 以字符串形式声明,
 # 框架按全限定名反射实例化。被 R8 改名后框架找不到入口 —— 表现为"模块装上但
 # 完全不生效", 且没有任何报错, 是最难排查的一类故障。
+# (XposedInit 无按名引用: java_init.list 仅声明 ModuleEntry, native 侧只硬编码
+#  NativeCheck/NativeCrash, 唯一构造点 ModuleEntry 是直接调用——R8 按可达性
+#  即可保留, 不再全量 keep, 交由 R8 裁剪优化)
 -keep class gm.tieba.tabswitch.ModuleEntry { *; }
--keep class gm.tieba.tabswitch.XposedInit { *; }
 
-# 兼容层: 框架通过 XposedModule 的公开方法回调, 这些方法名不能变
--keep class gm.tieba.tabswitch.bridge.** { *; }
+# 兼容层: 框架通过 XposedModule 的公开方法回调, 这些方法名不能变。
+# keepnames 而非 keep: 名字全部保留(框架回调链路安全性不变), 仅允许 R8 按
+# 可达性裁剪从未引用的死成员(如已删除调用方的旧 API), 体积只减不增
+-keepnames class gm.tieba.tabswitch.bridge.** { *; }
 
 # 原生崩溃捕获的 JNI 入口: 类名与方法名都被 cpp/hide/hide.cpp 以名字修饰导出的
 # 符号(Java_gm_tieba_tabswitch_util_NativeCrash_*)按字符串引用, 改名即静默失效
@@ -26,15 +29,12 @@
     native <methods>;
 }
 
-# 反射访问的宿主类字段/方法名由反混淆规则库以字符串给出, 不能被裁剪或改名;
-# 这里只保留注解与签名信息, 不整体 keep 宿主类(宿主类不在本 APK 内)
--keepnames class * {
-    @androidx.annotation.Keep <fields>;
-    @androidx.annotation.Keep <methods>;
-}
-
 # (Room keep 规则已删: 规则库改为 framework SQLiteOpenHelper 手写实现,
 #  无反射加载的生成类, 无需保留)
+# (@Keep 规则已删: 全源码无 @Keep 使用, 该规则从不匹配任何类)
+# (keepattributes 已删: 项目自身类无运行时注解/泛型签名反射需求——反射对象
+#  全在宿主进程; *Annotation* 会把 @NonNull/@ColorInt 等 CLASS-retention 注解
+#  连同内容一起塞进 dex, 纯体积浪费)
 
 # DexKit: libdexkit.so 仅以 Java_org_luckypray_dexkit_DexKitBridge_native* 与
 # Java_..._NativeReflect_* 符号为 JNI 入口(so 内字节串实测无指向其他包装类的
@@ -44,6 +44,6 @@
 -dontwarn org.luckypray.dexkit.**
 
 -assumenosideeffects class kotlin.jvm.internal.Intrinsics {
-	public static void check*(...);
-	public static void throw*(...);
+    public static void check*(...);
+    public static void throw*(...);
 }

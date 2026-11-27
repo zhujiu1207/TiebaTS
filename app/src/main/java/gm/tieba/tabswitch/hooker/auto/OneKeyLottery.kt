@@ -955,31 +955,12 @@ class OneKeyLottery : XposedContext(), IHooker {
     }
 
     // 当前账号 uid 候选（仅当前登录账号, 不做目录扫描——旧账号残留库会污染频道列表;
-    // LotteryPoisonGuard.candidateAccountUids 的目录扫描仅供免打扰/时间戳修复等按账号隔离的场景使用）
+    // 取值与纯数字校验收编于 LotterySupport.lotteryVerifiedAccountUids,
+    // LotteryPoisonGuard 的目录扫描仅供免打扰/时间戳修复等按账号隔离的场景使用）
     private fun currentAccountUids(): List<String> {
-        val candidateUids = mutableListOf<String>()
-        try {
-            // getCurrentAccountId 返回 long, 需按 Number 兼容取值(强转 String 会得到 null)
-            val accountId = XposedHelpers.callStaticMethod(
-                findClass("com.baidu.tbadk.core.TbadkCoreApplication"), "getCurrentAccountId"
-            )
-            val accountIdStr = when (accountId) {
-                is Number -> accountId.toLong().toString().takeIf { it != "0" }
-                is String -> accountId.takeIf { it.isNotEmpty() }
-                else -> null
-            }
-            // uid 会拼进 tb_group_chat_room_$uid 的 SQL, 与 candidateAccountUids
-            // 对齐做纯数字校验(非数字时 rawQuery/UPDATE 必抛异常刷日志)
-            accountIdStr?.let { if (it.matches(Regex("\\d+"))) candidateUids.add(it) }
-        } catch (tr: Throwable) {
-            lotteryTsLog("一键抽奖获取账号失败 -- $tr")
-        }
-        try {
-            Adp.account?.let { if (it.isNotEmpty() && it.matches(Regex("\\d+"))) candidateUids.add(it) }
-        } catch (ignored: Throwable) {
-        }
+        val candidateUids = lotteryVerifiedAccountUids("一键抽奖").toMutableList()
         lotteryTsLog("一键抽奖 当前账号候选: $candidateUids")
-        return candidateUids.distinct()
+        return candidateUids
     }
     // 阶段一：进房 -> 定位群助手 -> 立即发送口令（不等回复，repo 留给后续阶段）。
     // 复刻手动长按头像 @群助手 的发送；发送节奏（距上一次实际发送 ≥ MIN_SEND_GAP_MILLIS）由 doSend 保障。
@@ -1136,11 +1117,7 @@ class OneKeyLottery : XposedContext(), IHooker {
             // 两者皆无 = 此前没发出去过的房间，才会真正发送
             val todayStart = LotteryLedger.todayStartMillis()
             val todayMsgs = liveMsgsSince(task.roomId, todayStart).toMutableList()
-            LotteryHistoryFetch.fetchRecentMessages(appCtx, task.roomId)?.forEach { pojo ->
-                extractLotteryLiveMsg(pojo)?.takeIf {
-                    it.first == task.roomId && it.second.timeMs >= todayStart
-                }?.let { todayMsgs.add(it.second) }
-            }
+            todayMsgs.addAll(roomHistoryMsgs(appCtx, task.roomId, todayStart))
             if (LotteryLedger.daySetLoad(appCtx, "claimed").contains(task.roomId.toString()) ||
                 hasLotteryReply(todayMsgs, task)
             ) {
@@ -1161,11 +1138,7 @@ class OneKeyLottery : XposedContext(), IHooker {
                 if (!undeliveredThisRun) {
                     task.sent = true
                     // 只核查当日消息，避免昨日群助手的 @我 回复被误判为今日已确认
-                    val hist = LotteryHistoryFetch.fetchRecentMessages(appCtx, task.roomId)
-                        ?.mapNotNull { extractLotteryLiveMsg(it) }
-                        ?.filter { it.first == task.roomId && it.second.timeMs >= todayStart }
-                        ?.map { it.second }
-                        .orEmpty()
+                    val hist = roomHistoryMsgs(appCtx, task.roomId, todayStart)
                     if (hasLotteryReplyAtMe(hist, task)) {
                         task.confirmed = true
                         LotteryLedger.daySetAdd(appCtx, "claimed", task.roomId)
@@ -1215,6 +1188,20 @@ class OneKeyLottery : XposedContext(), IHooker {
         return task.confirmed || task.replySeen || task.echoed
     }
 
+    // 拉最近历史并取本房间的消息条目（fetchRecentMessages→extractLotteryLiveMsg
+    // →filter roomId→map second 的四步链此前在 4 处逐字重复, 收敛于此）。
+    // sinceMs 传 0 表示不按时间过滤（sweepRoom 需要原始快照自行做窗口判定——
+    // 历史是最近 60 条的原始快照, 直接合并会让昨日回显误判成今日送达, 见其注释）
+    private fun roomHistoryMsgs(
+        appCtx: android.content.Context, roomId: Long, sinceMs: Long = 0L
+    ): List<LotteryLiveMsg> {
+        return LotteryHistoryFetch.fetchRecentMessages(appCtx, roomId)
+            ?.mapNotNull { extractLotteryLiveMsg(it) }
+            ?.filter { it.first == roomId && (sinceMs <= 0L || it.second.timeMs >= sinceMs) }
+            ?.map { it.second }
+            .orEmpty()
+    }
+
     // 核查/复核：旁路（别人的消息、通道活性）+ 拉最近历史（@我的回复只在这里）合并判定。
     // 阶段内补发仅限发送回调明确报错（ack=err）的房间——"没等到回复"不作为补发依据
     // （回复本就延迟数分钟、自身回显不走多播，据此补发会打在已成功送达的房间上；
@@ -1222,11 +1209,7 @@ class OneKeyLottery : XposedContext(), IHooker {
     private fun sweepRoom(task: LotteryRoomTask, allowResend: Boolean) {
         if (!task.sent || task.confirmed) return
         val live = liveMsgsSince(task.roomId, task.sentAt - 10_000L)
-        val history = LotteryHistoryFetch.fetchRecentMessages(getContext().applicationContext, task.roomId)
-            ?.mapNotNull { extractLotteryLiveMsg(it) }
-            ?.filter { it.first == task.roomId }
-            ?.map { it.second }
-            .orEmpty()
+        val history = roomHistoryMsgs(getContext().applicationContext, task.roomId)
         // 历史是最近 60 条的原始快照, 不带时间窗: 昨日自己的口令回显在安静房间
         // 极易存活在窗口内, 直接合并会让 hasOwnEcho 把昨日回显误判成今日送达
         // (echoed=true → isSentOk 判成功 → 房间被排除出补发名单, 当日漏领)。
@@ -1340,8 +1323,7 @@ class OneKeyLottery : XposedContext(), IHooker {
             Thread.sleep(REPLY_POLL_GAP_MILLIS)
             val msgs = liveMsgsSince(task.roomId, task.sentAt - 10_000L).toMutableList()
             if (doFetch) {
-                LotteryHistoryFetch.fetchRecentMessages(appCtx, task.roomId)?.mapNotNull { extractLotteryLiveMsg(it) }
-                    ?.filter { it.first == task.roomId }?.map { it.second }?.let { msgs.addAll(it) }
+                msgs.addAll(roomHistoryMsgs(appCtx, task.roomId))
             }
             doFetch = !doFetch
             if (hasLotteryReplyAtMe(msgs, task)) return true

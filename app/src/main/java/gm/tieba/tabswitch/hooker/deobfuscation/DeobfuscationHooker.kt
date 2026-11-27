@@ -158,7 +158,7 @@ class DeobfuscationHooker(private val mMatchers: List<Matcher>) : XposedContext(
                     "Deobfuscation: 连续失败已达 $MAX_FAIL_COUNT 次, 跳过反混淆(保留旧规则)"
                 )
                 Logger.log("Deobfuscation 连续失败已达上限, 跳过(建议更新模块)")
-                recordDeobfsRun(activity, "熔断跳过: 连续失败${MAX_FAIL_COUNT}次")
+                recordDeobfsRun("熔断跳过: 连续失败${MAX_FAIL_COUNT}次")
                 thread {
                     // 整体防护: prefs commit/Logger 异常不应沿未捕获链击穿宿主。
                     // dex 签名校验较重放后台: 若 dex 实际未变(如此前失败是 DexKit
@@ -284,7 +284,7 @@ class DeobfuscationHooker(private val mMatchers: List<Matcher>) : XposedContext(
                 Logger.log(it)
                 if (transitionState(STATE_SCANNING, STATE_FAILED)) {
                     val failCount = DeobfuscationHelper.incDeobfsFailCount(activity)
-                    recordDeobfsRun(activity, "失败#$failCount: ${it.javaClass.simpleName}")
+                    recordDeobfsRun("失败#$failCount: ${it.javaClass.simpleName}")
                     showTerminal(activity, "反混淆失败", "处理失败(第${failCount}次)\n建议重启贴吧重试", false)
                 }
             }
@@ -311,22 +311,22 @@ class DeobfuscationHooker(private val mMatchers: List<Matcher>) : XposedContext(
             // 规则库完整性校验: 库被清空/上次写入中断而签名未变时, 不能走
             // "跳过重建"捷径, 否则规则永久缺失、每次启动弹"规则异常"死循环;
             // 校验失败(db 异常)按不完整处理, 回落完整反混淆尝试自愈
-            val ruleStoreIntact = runCatching { isRuleStoreIntact(activity) }
+            val ruleStoreIntact = runCatching { isRuleStoreIntact() }
                 .onFailure { logBoth(it) }
                 .getOrDefault(false)
                 if (ruleStoreIntact) {
-                    recordDeobfsRun(activity, "跳过: dex未变更且规则库完整")
-                    DeobfuscationHelper.saveDeobfsModuleId(activity, DeobfuscationHelper.currentModuleId())
+                    recordDeobfsRun("跳过: dex未变更且规则库完整")
+                    DeobfuscationHelper.saveDeobfsModuleId(DeobfuscationHelper.currentModuleId())
                     DeobfuscationHelper.resetDeobfsFailCount(activity)
                     // 落盘贴吧版本, 避免下次启动重复触发(用户不点重启直接杀进程时也生效)
-                    markDeobfsVersion(activity, getTbVersion(activity))
+                    markDeobfsVersion(getTbVersion(activity))
                     // 规则已在库中但本会话未加载任何 hooker, 仍需重启激活
                     if (transitionState(STATE_SCANNING, STATE_DONE)) {
                         showTerminal(activity, "反混淆完成", "无需重新定位\n重启贴吧以启用新功能", true)
                     }
                     return
                 }
-            recordDeobfsRun(activity, "自愈: dex未变更但规则库不完整, 重建")
+            recordDeobfsRun("自愈: dex未变更但规则库不完整, 重建")
             Logger.log("Deobfuscation: dex 未变更但规则库不完整, 重新执行反混淆")
         }
         try {
@@ -344,7 +344,7 @@ class DeobfuscationHooker(private val mMatchers: List<Matcher>) : XposedContext(
                 watchdog.schedule({
                     if (transitionState(STATE_SCANNING, STATE_FAILED)) {
                         Logger.log("Deobfuscation 看门狗: 扫描超过 ${DEOBFUSCATION_TIMEOUT_MINUTES} 分钟未完成, 释放界面")
-                        recordDeobfsRun(activity, "失败: 扫描超时${DEOBFUSCATION_TIMEOUT_MINUTES}分钟(疑似挂起)")
+                        recordDeobfsRun("失败: 扫描超时${DEOBFUSCATION_TIMEOUT_MINUTES}分钟(疑似挂起)")
                         DeobfuscationHelper.incDeobfsFailCount(activity)
                         showTerminal(
                             activity,
@@ -366,12 +366,12 @@ class DeobfuscationHooker(private val mMatchers: List<Matcher>) : XposedContext(
                 }
                 XposedBridge.log("Deobfuscation complete, current version: ${getTbVersion(activity)}")
                 Logger.log("Deobfuscation 完成, 当前版本: ${getTbVersion(activity)}")
-                recordDeobfsRun(activity, "完成: 规则${countAll()}条")
+                recordDeobfsRun("完成: 规则${countAll()}条")
                 DeobfuscationHelper.resetDeobfsFailCount(activity)
                 // 反混淆完成即落盘模块版本号(自动补扫的循环屏障)与贴吧版本
                 // (下次启动不再触发): 用户不点重启直接杀进程时同样生效
-                DeobfuscationHelper.saveDeobfsModuleId(activity, DeobfuscationHelper.currentModuleId())
-                markDeobfsVersion(activity, getTbVersion(activity))
+                DeobfuscationHelper.saveDeobfsModuleId(DeobfuscationHelper.currentModuleId())
+                markDeobfsVersion(getTbVersion(activity))
                 if (transitionState(STATE_SCANNING, STATE_DONE)) {
                     showTerminal(activity, "反混淆完成", "重启贴吧后新功能生效", true)
                 }
@@ -386,7 +386,6 @@ class DeobfuscationHooker(private val mMatchers: List<Matcher>) : XposedContext(
             if (transitionState(STATE_SCANNING, STATE_FAILED)) {
                 val failCount = DeobfuscationHelper.incDeobfsFailCount(activity)
                 recordDeobfsRun(
-                    activity,
                     "失败#${failCount}: ${e.javaClass.simpleName}: ${e.message?.take(100) ?: "无信息"}"
                 )
                 showTerminal(

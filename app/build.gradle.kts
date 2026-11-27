@@ -31,7 +31,7 @@ android {
         minSdk = 28
         targetSdk = targetSdkVersion
         versionCode = commitCount
-        versionName = "5.3.0"
+        versionName = "5.3.1"
         if (versionName!!.contains("alpha") || versionName!!.contains("beta")) {
             versionNameSuffix = ".$commitCountSinceLatestTag"
         }
@@ -156,7 +156,9 @@ dependencies {
     // libxposed API 102: 唯一的模块 API(legacy de.robv 82 已移除, LSPatch 等
     // legacy-only 框架不再支持)。compileOnly——运行时由框架注入
     compileOnly("io.github.libxposed:api:102.0.0")
-    api("androidx.annotation:annotation:1.7.1")
+    // androidx.annotation: 仅 Java 侧 @NonNull/@ColorInt 编译期标注, application
+    // 模块无下游消费者, implementation 足够(api 会把它提升进交付元数据, 无意义)
+    implementation("androidx.annotation:annotation:1.7.1")
 
     // DexKit 2.0.6 起才支持 16KB 页内核: 2.0.1 的 libdexkit.so 实测 PT_LOAD 仅
     // 4KB 对齐, 16KB 页设备上动态链接器直接拒载, 反混淆整体失效。

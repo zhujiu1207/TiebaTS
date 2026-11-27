@@ -19,6 +19,8 @@ import gm.tieba.tabswitch.hooker.IHooker
 //   PurgeAdPbInsert    Pb 渲染前广告插入/首楼推荐/掉落红包动画(无状态)
 //   PurgeAdForum       吧页推广 + 游戏悬浮条 + 首页搜索框推广词(字段/搜索框缓存)
 //   PurgeAdStrategy    广告策略层 + 广告 SDK 初始化阻断(无状态)
+//   PurgeAdScoring     满意度打分卡(吧内热门核心吧友专属/帖子内评论区氛围打分,
+//                      全局 NPS 悬浮卡的列表内嵌形态, 2026-11-27 新增)
 //   PurgeAdKeys        宿主锚点常量集中地(版本漂移对照检索)
 // 本类保留 hooker 入口、hook() 编排与 isAdKey 判定（isPostAdItem 及其两块缓存
 // 随 PurgeAdPostPage 走，见该文件）。
@@ -39,6 +41,9 @@ class PurgeAd : XposedContext(), IHooker {
         PurgeAdStrategy.blockAdStrategy()
         PurgeAdForum.blockSearchBoxPromoText()
         PurgeAdStrategy.blockAdSdkInit()
+        PurgeAdScoring.blockFeedScoringCards()
+        PurgeAdScoring.blockCommentScoringCard()
+        PurgeAdScoring.blockPbScoringComponent()
     }
 
     // 模板键是否为广告卡片

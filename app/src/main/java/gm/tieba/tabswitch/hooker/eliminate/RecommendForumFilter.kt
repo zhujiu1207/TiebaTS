@@ -38,8 +38,6 @@ class RecommendForumFilter : XposedContext(), IHooker {
     )
 
     // 模板卡数据项接口 (22.12=nt9/fs9, 22.13=eu9): b()=卡片键, d()=载荷; 内层卡实现同一接口(共享 Fs9Api)
-    private fun resolveCardMethods(): Boolean = Fs9Api.resolve()
-
     private fun cardKey(item: Any?): String? {
         return Fs9Api.cardKey(item)
     }
@@ -136,45 +134,25 @@ class RecommendForumFilter : XposedContext(), IHooker {
         return false
     }
 
-    // 合成卡载荷内的内层卡是否含推荐吧卡
-    private fun payloadHasRecommendCard(payload: Any): Boolean {
-        for (field in resolveListFields(payload.javaClass)) {
-            val inner = runCatching { field.get(payload) as? List<*> }.getOrNull() ?: continue
-            for (element in inner) {
-                if (element == null) continue
-                val key = cardKey(element) ?: continue
-                if (key in RECOMMEND_FORUM_TEMPLATE_KEYS) return true
-            }
-        }
-        return false
-    }
+    // 合成卡载荷内的内层卡是否含推荐吧卡(键扫描收编为 Fs9Api.payloadHasKey)
+    private fun payloadHasRecommendCard(payload: Any): Boolean =
+        Fs9Api.payloadHasKey(payload, RECOMMEND_FORUM_TEMPLATE_KEYS)
 
     // 在适配器列表入口处过滤推荐吧模板卡; 返回原列表表示无需修改。
-    // 非 private: FollowFilter(只推荐已关注的吧)复用同一检测丢弃推荐吧卡
+    // 非 private: FollowFilter(只推荐已关注的吧)复用同一检测丢弃推荐吧卡。
+    // 骨架共享于 Fs9Api.filterByCardKeys(原手写主循环已收编);
+    // 推荐吧合成卡的卡片列表藏在嵌套数据对象中, 载荷谓词双路 OR 判定。
+    // payloadCheckAllOuter=true 保持原实现对任意非命中键条目都探测载荷的口径
+    // (home_delegate_card 等其它外壳合成卡内嵌推荐吧时不可漏)
     fun filterTemplateList(list: List<*>?): List<*>? {
-        if (list == null || list.isEmpty()) return list
-        if (!resolveCardMethods()) return list
-        return Fs9Api.filterCopy(list) { item ->
-            var drop = false
-            if (item != null) {
-                val key = cardKey(item)
-                if (key != null && key in RECOMMEND_FORUM_TEMPLATE_KEYS) {
-                    // 独立推荐吧卡直接移除
-                    drop = true
-                } else {
-                    // 合成卡: 载荷内的内层卡(直接List字段或嵌套数据)含推荐吧卡则整帖移除
-                    val payload = runCatching { Fs9Api.cardPayload(item) }.getOrNull()
-                    if (payload != null &&
-                        (payloadHasRecommendCard(payload) || payloadHasNestedRecommendCard(payload))
-                    ) {
-                        drop = true
-                    }
-                }
-            }
-            if (drop && gm.tieba.tabswitch.util.Logger.isEnabled()) {
-                gm.tieba.tabswitch.util.Logger.log("recommend_forum dropped")
-            }
-            drop
+        val filtered = Fs9Api.filterByCardKeys(
+            list, RECOMMEND_FORUM_TEMPLATE_KEYS, payloadCheckAllOuter = true
+        ) { payload ->
+            payloadHasRecommendCard(payload) || payloadHasNestedRecommendCard(payload)
         }
+        if (filtered !== list && gm.tieba.tabswitch.util.Logger.isEnabled()) {
+            gm.tieba.tabswitch.util.Logger.log("recommend_forum dropped")
+        }
+        return filtered
     }
 }
